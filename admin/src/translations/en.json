@@ -1,0 +1,8 @@
+{
+  "plugin.name": "Redirect Manager",
+  "settings.title": "Redirect Manager Settings",
+  "settings.save": "Save",
+  "settings.enabled": "Enabled",
+  "settings.slugField": "Slug Field",
+  "settings.contentType": "Content Type"
+}
