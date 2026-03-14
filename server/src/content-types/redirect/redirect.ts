@@ -16,22 +16,23 @@ export default {
     'content-type-builder': { visible: false },
   },
   attributes: {
-    contentType: {
+    from: {
       type: 'string',
       required: true,
     },
-    oldSlug: {
+    to: {
       type: 'string',
       required: true,
     },
-    newSlug: {
-      type: 'string',
-      required: true,
-    },
-    redirectType: {
-      type: 'string',
+    type: {
+      type: 'enumeration',
+      enum: ['301', '302'],
       required: true,
       default: '301',
+    },
+    isActive: {
+      type: 'boolean',
+      default: true,
     },
     comment: {
       type: 'text',

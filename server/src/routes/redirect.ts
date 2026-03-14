@@ -1,47 +1,61 @@
 export default {
-  type: 'content-api',
+  type: 'admin',
   routes: [
+    // Settings routes
     {
       method: 'GET',
       path: '/settings',
       handler: 'redirect.getSettings',
-      config: { auth: false },
+      config: { policies: [] },
     },
     {
       method: 'POST',
       path: '/settings',
       handler: 'redirect.saveSettings',
-      config: { auth: false },
+      config: { policies: [] },
     },
     {
       method: 'GET',
       path: '/content-types',
       handler: 'redirect.getContentTypes',
-      config: { auth: false },
+      config: { policies: [] },
+    },
+    // CRUD routes
+    {
+      method: 'GET',
+      path: '/redirects',
+      handler: 'redirect.find',
+      config: { policies: [] },
     },
     {
       method: 'GET',
-      path: '/redirect',
-      handler: 'redirect.getRedirect',
-      config: { auth: false },
-    },
-    {
-      method: 'GET',
-      path: '/redirect/all',
-      handler: 'redirect.getAllRedirect',
-      config: { auth: false },
+      path: '/redirects/:id',
+      handler: 'redirect.findOne',
+      config: { policies: [] },
     },
     {
       method: 'POST',
-      path: '/redirect',
-      handler: 'redirect.createRedirect',
-      config: { auth: false },
+      path: '/redirects',
+      handler: 'redirect.create',
+      config: { policies: [] },
     },
     {
-      method: 'GET',
-      path: '/content/:contentType/:slug',
-      handler: 'redirect.findContentBySlug',
-      config: { auth: false },
+      method: 'PUT',
+      path: '/redirects/:id',
+      handler: 'redirect.update',
+      config: { policies: [] },
+    },
+    {
+      method: 'DELETE',
+      path: '/redirects/:id',
+      handler: 'redirect.delete',
+      config: { policies: [] },
+    },
+    {
+      method: 'PUT',
+      path: '/redirects/:id/toggle',
+      handler: 'redirect.toggleActive',
+      config: { policies: [] },
     },
   ],
 };

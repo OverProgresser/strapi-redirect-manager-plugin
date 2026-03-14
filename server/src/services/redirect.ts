@@ -1,7 +1,10 @@
 import type { Core } from '@strapi/strapi';
 
+import type { Redirect, CreateRedirectInput, UpdateRedirectInput } from '../types/redirect';
+
+const UID = 'plugin::redirect-manager.redirect' as const;
+
 const PLUGIN_STORE_KEY = 'settings';
-const REDIRECT_UID = 'plugin::redirect-manager.redirect';
 
 export interface ContentTypeSettings {
   enabled: boolean;
@@ -12,15 +15,11 @@ export interface PluginSettings {
   enabledContentTypes: Record<string, ContentTypeSettings>;
 }
 
-export interface RedirectData {
-  contentType: string;
-  oldSlug: string;
-  newSlug: string;
-  redirectType?: string;
-  comment?: string;
-}
-
 const redirectService = ({ strapi }: { strapi: Core.Strapi }) => ({
+  // ---------------------------------------------------------------------------
+  // Settings (preserved from existing service)
+  // ---------------------------------------------------------------------------
+
   async getSettings(): Promise<PluginSettings> {
     const store = strapi.store({
       environment: '',
@@ -43,106 +42,104 @@ const redirectService = ({ strapi }: { strapi: Core.Strapi }) => ({
 
   async getContentTypes(): Promise<Record<string, unknown>[]> {
     const contentTypes = Object.values(strapi.contentTypes).filter(
-      (ct: any) => ct.uid?.startsWith('api::'),
+      (ct) => (ct as { uid?: string }).uid?.startsWith('api::'),
     );
 
-    return contentTypes.map((ct: any) => ({
-      uid: ct.uid,
-      displayName: ct.info?.displayName ?? ct.uid,
-      attributes: Object.entries(ct.attributes ?? {})
-        .filter(([, attr]: [string, any]) => attr.type === 'string' || attr.type === 'uid')
-        .map(([key]) => key),
-    }));
+    return contentTypes.map((ct) => {
+      const typed = ct as { uid?: string; info?: { displayName?: string }; attributes?: Record<string, { type?: string }> };
+      return {
+        uid: typed.uid,
+        displayName: typed.info?.displayName ?? typed.uid,
+        attributes: Object.entries(typed.attributes ?? {})
+          .filter(([, attr]) => attr.type === 'string' || attr.type === 'uid')
+          .map(([key]) => key),
+      };
+    });
   },
 
-  async resolveRedirect(
-    contentType: string,
-    oldSlug: string,
-  ): Promise<Record<string, unknown> | null> {
-    const slugVariants = [
-      oldSlug,
-      `/${oldSlug}`,
-      `${oldSlug}/`,
-      `/${oldSlug}/`,
-    ].filter((v, i, arr) => arr.indexOf(v) === i);
+  // ---------------------------------------------------------------------------
+  // CRUD
+  // ---------------------------------------------------------------------------
 
-    const visitedSlugs = new Set<string>();
-    let current: Record<string, unknown> | null = null;
-    let slug = oldSlug;
+  async findAll(): Promise<Redirect[]> {
+    const results = await strapi.db.query(UID).findMany({
+      orderBy: { createdAt: 'desc' },
+    });
+    return results as Redirect[];
+  },
 
-    while (!visitedSlugs.has(slug)) {
-      visitedSlugs.add(slug);
+  async findActive(): Promise<Redirect[]> {
+    const results = await strapi.db.query(UID).findMany({
+      where: { isActive: true },
+      orderBy: { createdAt: 'desc' },
+    });
+    return results as Redirect[];
+  },
 
-      const variants = [slug, `/${slug}`, `${slug}/`, `/${slug}/`].filter(
-        (v, i, arr) => arr.indexOf(v) === i,
-      );
+  async findByFrom(from: string): Promise<Redirect | null> {
+    const result = await strapi.db.query(UID).findOne({
+      where: { from, isActive: true },
+    });
+    return (result as Redirect) ?? null;
+  },
 
-      const results = await Promise.all(
-        variants.map((v) =>
-          strapi.db.query(REDIRECT_UID).findOne({
-            where: { contentType, oldSlug: v },
-          }),
-        ),
-      );
+  async findOne(id: number): Promise<Redirect | null> {
+    const result = await strapi.db.query(UID).findOne({
+      where: { id },
+    });
+    return (result as Redirect) ?? null;
+  },
 
-      const found = results.find((r) => r !== null) as Record<string, unknown> | null;
-      if (!found) break;
+  async create(data: CreateRedirectInput): Promise<Redirect> {
+    const existing = await strapi.db.query(UID).findOne({
+      where: { from: data.from },
+    });
 
-      current = found;
-      slug = found.newSlug as string;
+    if (existing) {
+      throw new Error(`A redirect from '${data.from}' already exists.`);
     }
 
-    return current;
+    const result = await strapi.db.query(UID).create({ data });
+    return result as Redirect;
   },
 
-  async getAllRedirects(): Promise<Record<string, unknown>[]> {
-    const results = await strapi.db.query(REDIRECT_UID).findMany({
-      limit: 500,
-    });
-
-    return (results as Record<string, unknown>[]).filter((r) => {
-      const segments = (r.oldSlug as string).split('/').filter(Boolean);
-      return segments.length > 1;
-    });
-  },
-
-  async createRedirect(data: RedirectData): Promise<Record<string, unknown>> {
-    // Remove any existing reverse redirect to prevent loops
-    await strapi.db.query(REDIRECT_UID).deleteMany({
-      where: {
-        contentType: data.contentType,
-        oldSlug: data.newSlug,
-        newSlug: data.oldSlug,
-      },
-    });
-
-    return strapi.db.query(REDIRECT_UID).create({ data }) as Promise<Record<string, unknown>>;
-  },
-
-  async findContentBySlug(
-    contentTypeUid: string,
-    slug: string,
-  ): Promise<Record<string, unknown> | null> {
-    const settings = await this.getSettings();
-    const config = settings.enabledContentTypes?.[contentTypeUid];
-
-    if (!config?.slugField) {
-      return null;
+  async update(id: number, data: UpdateRedirectInput): Promise<Redirect> {
+    // If 'from' is being changed, verify no conflict with another record
+    if (data.from !== undefined) {
+      const conflict = await strapi.db.query(UID).findOne({
+        where: { from: data.from },
+      });
+      if (conflict && (conflict as Redirect).id !== id) {
+        throw new Error(`A redirect from '${data.from}' already exists.`);
+      }
     }
 
-    const entry = await strapi.db.query(contentTypeUid).findOne({
-      where: { [config.slugField]: slug },
+    const result = await strapi.db.query(UID).update({
+      where: { id },
+      data,
+    });
+    return result as Redirect;
+  },
+
+  async delete(id: number): Promise<void> {
+    await strapi.db.query(UID).delete({ where: { id } });
+  },
+
+  async toggleActive(id: number): Promise<Redirect> {
+    const existing = await strapi.db.query(UID).findOne({
+      where: { id },
     });
 
-    if (entry) return entry as Record<string, unknown>;
+    if (!existing) {
+      throw new Error(`Redirect with id ${id} not found.`);
+    }
 
-    // Try chain resolution
-    const redirect = await this.resolveRedirect(contentTypeUid, slug);
-    if (!redirect) return null;
-
-    return strapi.db.query(contentTypeUid).findOne({
-      where: { [config.slugField]: redirect.newSlug as string },
-    }) as Promise<Record<string, unknown> | null>;
+    const current = existing as Redirect;
+    const result = await strapi.db.query(UID).update({
+      where: { id },
+      data: { isActive: !current.isActive },
+    });
+    return result as Redirect;
   },
 });
 
