@@ -1,0 +1,65 @@
+{
+  "name": "strapi-plugin-redirect-manager",
+  "version": "0.1.0",
+  "description": "Redirect management plugin for Strapi v5 — auto-redirects, chain detection, orphan redirect queue",
+  "type": "commonjs",
+  "author": "OverProgresser",
+  "license": "MIT",
+  "keywords": ["strapi", "strapi-plugin", "redirect", "seo", "301"],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/OverProgresser/strapi-redirect-manager-plugin"
+  },
+  "bugs": {
+    "url": "https://github.com/OverProgresser/strapi-redirect-manager-plugin/issues"
+  },
+  "homepage": "https://github.com/OverProgresser/strapi-redirect-manager-plugin#readme",
+  "exports": {
+    "./package.json": "./package.json",
+    "./strapi-admin": {
+      "types": "./dist/admin/src/index.d.ts",
+      "source": "./admin/src/index.ts",
+      "import": "./dist/admin/index.mjs",
+      "require": "./dist/admin/index.js",
+      "default": "./dist/admin/index.js"
+    },
+    "./strapi-server": {
+      "types": "./dist/server/src/index.d.ts",
+      "source": "./server/src/index.ts",
+      "import": "./dist/server/index.mjs",
+      "require": "./dist/server/index.js",
+      "default": "./dist/server/index.js"
+    }
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "strapi-plugin build",
+    "watch": "strapi-plugin watch",
+    "watch:link": "strapi-plugin watch:link",
+    "verify": "strapi-plugin verify",
+    "test:ts:back": "tsc -p server/tsconfig.json",
+    "test:ts:front": "tsc -p admin/tsconfig.json"
+  },
+  "peerDependencies": {
+    "@strapi/sdk-plugin": "^5.0.0",
+    "@strapi/strapi": ">=5.0.0 <6.0.0",
+    "react": "^18.0.0",
+    "react-dom": "^18.0.0",
+    "react-router-dom": "^6.0.0",
+    "styled-components": "^6.0.0"
+  },
+  "devDependencies": {
+    "@strapi/sdk-plugin": "^5.3.2",
+    "@strapi/strapi": "^5.0.0",
+    "@strapi/typescript-utils": "^5.0.0",
+    "@types/react": "^18.0.0",
+    "@types/react-dom": "^18.0.0",
+    "typescript": "^5.0.0"
+  },
+  "strapi": {
+    "kind": "plugin",
+    "name": "redirect-manager",
+    "displayName": "Redirect Manager",
+    "description": "Manage 301/302 redirects from the Strapi admin panel"
+  }
+}
