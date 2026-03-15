@@ -5,8 +5,8 @@ import bootstrap from '../bootstrap';
 //
 // bootstrap.ts does:
 //   strapi.plugin('redirect-manager').service('redirect') → redirectService
-//   strapi.db.lifecycles.subscribe({ beforeUpdate, afterUpdate })
-//   strapi.db.query(uid).findOne(...)       — for fetching old slug
+//   strapi.db.lifecycles.subscribe({ beforeUpdate, afterUpdate, afterDelete })
+//   strapi.db.query(uid).findOne(...)       — for fetching old slug + published check
 //   strapi.db.query(UID).deleteMany(...)    — for cycle prevention
 //   redirectService.getSettings()
 //   redirectService.create(...)
@@ -259,9 +259,9 @@ describe('bootstrap', () => {
       expect(mockContentQuery.findOne).not.toHaveBeenCalled();
     });
 
-    it('should store oldSlug in event.state when all conditions met', async () => {
+    it('should select documentId alongside slugField when fetching existing record', async () => {
       mockRedirectService.getSettings.mockResolvedValue(makeSettings());
-      mockContentQuery.findOne.mockResolvedValue({ slug: 'current-slug' });
+      mockContentQuery.findOne.mockResolvedValue({ slug: 'current-slug', documentId: 'abc123' });
 
       const event: LifecycleEvent = {
         model: { uid: 'api::page.page' },
@@ -271,18 +271,170 @@ describe('bootstrap', () => {
 
       await subscribedHandler.beforeUpdate(event);
 
-      // Should query the content type (not the redirect type)
+      // Must select both slugField and documentId for D&P published version check
       expect(mockStrapi.db.query).toHaveBeenCalledWith('api::page.page');
       expect(mockContentQuery.findOne).toHaveBeenCalledWith({
         where: { id: 10 },
-        select: ['slug'],
+        select: ['slug', 'documentId'],
       });
-      expect(event.state).toEqual({ oldSlug: 'current-slug' });
+    });
+
+    it('should set hasDraftAndPublish: false when params.data has no publishedAt key (non-D&P model)', async () => {
+      // Non-D&P models do not have publishedAt in the update data at all
+      mockRedirectService.getSettings.mockResolvedValue(makeSettings());
+      mockContentQuery.findOne.mockResolvedValue({ slug: 'current-slug', documentId: 'abc123' });
+
+      const event: LifecycleEvent = {
+        model: { uid: 'api::page.page' },
+        params: { where: { id: 10 }, data: { title: 'Updated Title' } },
+        state: {},
+      };
+
+      await subscribedHandler.beforeUpdate(event);
+
+      expect(event.state).toEqual({
+        oldSlug: 'current-slug',
+        hasDraftAndPublish: false,
+        hasPublishedVersion: false,
+      });
+      // Should NOT query for published version when hasDraftAndPublish is false
+      expect(mockContentQuery.findOne).toHaveBeenCalledTimes(1);
+    });
+
+    it('should detect D&P and check for published version when publishedAt is in params.data', async () => {
+      // D&P model: publishedAt key exists in data (even if null for draft save)
+      mockRedirectService.getSettings.mockResolvedValue(makeSettings());
+      mockContentQuery.findOne
+        // First call: fetch existing record with old slug
+        .mockResolvedValueOnce({ slug: 'current-slug', documentId: 'doc-1' })
+        // Second call: check for published version
+        .mockResolvedValueOnce({ id: 42 });
+
+      const event: LifecycleEvent = {
+        model: { uid: 'api::page.page' },
+        params: { where: { id: 10 }, data: { publishedAt: null } },
+        state: {},
+      };
+
+      await subscribedHandler.beforeUpdate(event);
+
+      // Should query for published version using documentId
+      expect(mockContentQuery.findOne).toHaveBeenCalledTimes(2);
+      expect(mockContentQuery.findOne).toHaveBeenNthCalledWith(2, {
+        where: {
+          documentId: 'doc-1',
+          publishedAt: { $notNull: true },
+        },
+        select: ['id'],
+      });
+      expect(event.state).toEqual({
+        oldSlug: 'current-slug',
+        hasDraftAndPublish: true,
+        hasPublishedVersion: true,
+      });
+    });
+
+    it('should set hasPublishedVersion: false when no published row exists', async () => {
+      mockRedirectService.getSettings.mockResolvedValue(makeSettings());
+      mockContentQuery.findOne
+        .mockResolvedValueOnce({ slug: 'draft-slug', documentId: 'doc-2' })
+        // No published version found
+        .mockResolvedValueOnce(null);
+
+      const event: LifecycleEvent = {
+        model: { uid: 'api::page.page' },
+        params: { where: { id: 5 }, data: { publishedAt: null } },
+        state: {},
+      };
+
+      await subscribedHandler.beforeUpdate(event);
+
+      expect(event.state).toEqual({
+        oldSlug: 'draft-slug',
+        hasDraftAndPublish: true,
+        hasPublishedVersion: false,
+      });
+    });
+
+    it('should skip published version check when existing record is null', async () => {
+      mockRedirectService.getSettings.mockResolvedValue(makeSettings());
+      mockContentQuery.findOne.mockResolvedValueOnce(null);
+
+      const event: LifecycleEvent = {
+        model: { uid: 'api::page.page' },
+        params: { where: { id: 999 }, data: { publishedAt: null } },
+        state: {},
+      };
+
+      await subscribedHandler.beforeUpdate(event);
+
+      // hasDraftAndPublish is true (publishedAt in data), but existing is null
+      // so the `if (hasDraftAndPublish && existing)` guard skips the published check
+      expect(mockContentQuery.findOne).toHaveBeenCalledTimes(1);
+      expect(event.state).toEqual({
+        oldSlug: null,
+        hasDraftAndPublish: true,
+        hasPublishedVersion: false,
+      });
+    });
+
+    it('should skip published version check when documentId is missing from existing record', async () => {
+      mockRedirectService.getSettings.mockResolvedValue(makeSettings());
+      // Existing record has no documentId field
+      mockContentQuery.findOne.mockResolvedValueOnce({ slug: 'some-slug' });
+
+      const event: LifecycleEvent = {
+        model: { uid: 'api::page.page' },
+        // data also has no documentId
+        params: { where: { id: 7 }, data: { publishedAt: null } },
+        state: {},
+      };
+
+      await subscribedHandler.beforeUpdate(event);
+
+      // documentId is undefined from both existing and data, so the `if (documentId)` guard skips
+      expect(mockContentQuery.findOne).toHaveBeenCalledTimes(1);
+      expect(event.state).toEqual({
+        oldSlug: 'some-slug',
+        hasDraftAndPublish: true,
+        hasPublishedVersion: false,
+      });
+    });
+
+    it('should fall back to documentId from params.data when not on existing record', async () => {
+      mockRedirectService.getSettings.mockResolvedValue(makeSettings());
+      // existing record has slug but no documentId
+      mockContentQuery.findOne
+        .mockResolvedValueOnce({ slug: 'my-slug' })
+        // published version check
+        .mockResolvedValueOnce({ id: 99 });
+
+      const event: LifecycleEvent = {
+        model: { uid: 'api::page.page' },
+        params: { where: { id: 3 }, data: { publishedAt: null, documentId: 'from-data' } },
+        state: {},
+      };
+
+      await subscribedHandler.beforeUpdate(event);
+
+      // Should use documentId from data as fallback
+      expect(mockContentQuery.findOne).toHaveBeenNthCalledWith(2, {
+        where: {
+          documentId: 'from-data',
+          publishedAt: { $notNull: true },
+        },
+        select: ['id'],
+      });
+      expect(event.state).toEqual({
+        oldSlug: 'my-slug',
+        hasDraftAndPublish: true,
+        hasPublishedVersion: true,
+      });
     });
 
     it('should store null as oldSlug when existing record has no slug value', async () => {
       mockRedirectService.getSettings.mockResolvedValue(makeSettings());
-      mockContentQuery.findOne.mockResolvedValue({ title: 'No slug field' });
+      mockContentQuery.findOne.mockResolvedValue({ title: 'No slug field', documentId: 'abc' });
 
       const event: LifecycleEvent = {
         model: { uid: 'api::page.page' },
@@ -293,7 +445,12 @@ describe('bootstrap', () => {
       await subscribedHandler.beforeUpdate(event);
 
       // slug field is undefined on the result, so ?? null kicks in
-      expect(event.state).toEqual({ oldSlug: null });
+      // No publishedAt in data → hasDraftAndPublish: false
+      expect(event.state).toEqual({
+        oldSlug: null,
+        hasDraftAndPublish: false,
+        hasPublishedVersion: false,
+      });
     });
 
     it('should store null as oldSlug when findOne returns null (record not found)', async () => {
@@ -308,7 +465,31 @@ describe('bootstrap', () => {
 
       await subscribedHandler.beforeUpdate(event);
 
-      expect(event.state).toEqual({ oldSlug: null });
+      expect(event.state).toEqual({
+        oldSlug: null,
+        hasDraftAndPublish: false,
+        hasPublishedVersion: false,
+      });
+    });
+
+    it('should handle params.data being undefined (defaults to empty object)', async () => {
+      mockRedirectService.getSettings.mockResolvedValue(makeSettings());
+      mockContentQuery.findOne.mockResolvedValue({ slug: 'existing', documentId: 'doc-x' });
+
+      const event: LifecycleEvent = {
+        model: { uid: 'api::page.page' },
+        params: { where: { id: 1 } },
+        state: {},
+      };
+
+      await subscribedHandler.beforeUpdate(event);
+
+      // data ?? {} means publishedAt is not 'in' the empty object
+      expect(event.state).toEqual({
+        oldSlug: 'existing',
+        hasDraftAndPublish: false,
+        hasPublishedVersion: false,
+      });
     });
   });
 
@@ -428,27 +609,118 @@ describe('bootstrap', () => {
       expect(mockRedirectService.create).not.toHaveBeenCalled();
     });
 
-    it('should NOT create redirect for draft content (draftAndPublish guard)', async () => {
-      // BUSINESS CRITICAL: draft entries must NOT generate redirects
+    // --- D&P guard tests (Strapi v5 Draft & Publish) ---
+
+    it('should NOT create redirect for draft save with no published version', async () => {
+      // BUSINESS CRITICAL: draft-only entries have no public URL — redirect is pointless
+      // beforeUpdate sets hasDraftAndPublish: true, hasPublishedVersion: false
+      // when publishedAt is in params.data but no published row exists
       mockRedirectService.getSettings.mockResolvedValue(makeSettings());
 
       const event: LifecycleEvent = {
-        model: {
-          uid: 'api::page.page',
-          options: { draftAndPublish: true },
-        },
+        model: { uid: 'api::page.page' },
         params: { where: { id: 1 }, data: {} },
-        state: { oldSlug: 'old-slug' },
-        result: {
-          slug: 'new-slug',
-          publishedAt: null, // draft — not yet published
+        state: {
+          oldSlug: 'old-slug',
+          hasDraftAndPublish: true,
+          hasPublishedVersion: false,
         },
+        result: { slug: 'new-slug' },
       };
 
       await subscribedHandler.afterUpdate(event);
 
       expect(mockRedirectService.create).not.toHaveBeenCalled();
       expect(mockRedirectQuery.deleteMany).not.toHaveBeenCalled();
+    });
+
+    it('should create redirect for draft save when published version exists', async () => {
+      // Even though this is a draft save, a published version exists so the
+      // old slug was publicly accessible — redirect is warranted
+      mockRedirectService.getSettings.mockResolvedValue(makeSettings());
+      mockRedirectQuery.deleteMany.mockResolvedValue({ count: 0 });
+      mockRedirectService.create.mockResolvedValue({});
+
+      const event: LifecycleEvent = {
+        model: { uid: 'api::page.page' },
+        params: { where: { id: 1 }, data: {} },
+        state: {
+          oldSlug: 'old-slug',
+          hasDraftAndPublish: true,
+          hasPublishedVersion: true,
+        },
+        result: { slug: 'new-slug' },
+      };
+
+      await subscribedHandler.afterUpdate(event);
+
+      expect(mockRedirectService.create).toHaveBeenCalledWith({
+        from: '/old-slug',
+        to: '/new-slug',
+        type: 'permanent',
+      });
+    });
+
+    it('should create redirect on publish action when slug changed', async () => {
+      // Publish action: publishedAt has a timestamp, published version exists
+      // The slug changed between old and new — redirect needed
+      mockRedirectService.getSettings.mockResolvedValue(makeSettings());
+      mockRedirectQuery.deleteMany.mockResolvedValue({ count: 0 });
+      mockRedirectService.create.mockResolvedValue({});
+
+      const event: LifecycleEvent = {
+        model: { uid: 'api::page.page' },
+        params: { where: { id: 1 }, data: {} },
+        state: {
+          oldSlug: 'old-published-slug',
+          hasDraftAndPublish: true,
+          hasPublishedVersion: true,
+        },
+        result: {
+          slug: 'new-published-slug',
+          publishedAt: '2026-01-15T12:00:00.000Z',
+        },
+      };
+
+      await subscribedHandler.afterUpdate(event);
+
+      expect(mockRedirectQuery.deleteMany).toHaveBeenCalledWith({
+        where: { from: '/new-published-slug', to: '/old-published-slug' },
+      });
+      expect(mockRedirectService.create).toHaveBeenCalledWith({
+        from: '/old-published-slug',
+        to: '/new-published-slug',
+        type: 'permanent',
+      });
+    });
+
+    it('should create redirect for non-D&P model (hasDraftAndPublish: false)', async () => {
+      // Non-D&P models: hasDraftAndPublish is false, so the D&P guard is skipped entirely
+      // The redirect is created based solely on slug change
+      mockRedirectService.getSettings.mockResolvedValue(makeSettings());
+      mockRedirectQuery.deleteMany.mockResolvedValue({ count: 0 });
+      mockRedirectService.create.mockResolvedValue({});
+
+      const event: LifecycleEvent = {
+        model: { uid: 'api::page.page' },
+        params: { where: { id: 1 }, data: {} },
+        state: {
+          oldSlug: 'old',
+          hasDraftAndPublish: false,
+          hasPublishedVersion: false,
+        },
+        result: { slug: 'new' },
+      };
+
+      await subscribedHandler.afterUpdate(event);
+
+      // D&P guard: `hasDraftAndPublish && !hasPublishedVersion` → false && !false → false
+      // Guard does NOT trigger, so redirect proceeds
+      expect(mockRedirectService.create).toHaveBeenCalledWith({
+        from: '/old',
+        to: '/new',
+        type: 'permanent',
+      });
     });
 
     it('should NOT create redirect when slug has not changed', async () => {
@@ -497,7 +769,7 @@ describe('bootstrap', () => {
       expect(mockRedirectService.create).not.toHaveBeenCalled();
     });
 
-    it('should delete reverse redirect and create new redirect when slug changes (published)', async () => {
+    it('should delete reverse redirect and create new redirect when slug changes', async () => {
       mockRedirectService.getSettings.mockResolvedValue(makeSettings());
       mockRedirectQuery.deleteMany.mockResolvedValue({ count: 0 });
       mockRedirectService.create.mockResolvedValue({
@@ -524,57 +796,6 @@ describe('bootstrap', () => {
       expect(mockRedirectService.create).toHaveBeenCalledWith({
         from: '/old-slug',
         to: '/new-slug',
-        type: 'permanent',
-      });
-    });
-
-    it('should create redirect for published content (draftAndPublish: true, publishedAt set)', async () => {
-      mockRedirectService.getSettings.mockResolvedValue(makeSettings());
-      mockRedirectQuery.deleteMany.mockResolvedValue({ count: 0 });
-      mockRedirectService.create.mockResolvedValue({});
-
-      const event: LifecycleEvent = {
-        model: {
-          uid: 'api::page.page',
-          options: { draftAndPublish: true },
-        },
-        params: { where: { id: 1 }, data: {} },
-        state: { oldSlug: 'old' },
-        result: {
-          slug: 'new',
-          publishedAt: '2026-01-01T00:00:00.000Z',
-        },
-      };
-
-      await subscribedHandler.afterUpdate(event);
-
-      expect(mockRedirectService.create).toHaveBeenCalledWith({
-        from: '/old',
-        to: '/new',
-        type: 'permanent',
-      });
-    });
-
-    it('should create redirect for content without draftAndPublish option', async () => {
-      mockRedirectService.getSettings.mockResolvedValue(makeSettings());
-      mockRedirectQuery.deleteMany.mockResolvedValue({ count: 0 });
-      mockRedirectService.create.mockResolvedValue({});
-
-      const event: LifecycleEvent = {
-        model: {
-          uid: 'api::page.page',
-          // no options.draftAndPublish — means no draft system
-        },
-        params: { where: { id: 1 }, data: {} },
-        state: { oldSlug: 'old' },
-        result: { slug: 'new' },
-      };
-
-      await subscribedHandler.afterUpdate(event);
-
-      expect(mockRedirectService.create).toHaveBeenCalledWith({
-        from: '/old',
-        to: '/new',
         type: 'permanent',
       });
     });

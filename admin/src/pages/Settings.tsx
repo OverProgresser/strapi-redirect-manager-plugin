@@ -16,6 +16,7 @@ import {
   Td,
   SingleSelect,
   SingleSelectOption,
+  TextInput,
 } from '@strapi/design-system';
 import { useFetchClient, useNotification } from '@strapi/strapi/admin';
 import { PLUGIN_ID } from '../pluginId';
@@ -114,6 +115,21 @@ const Settings = () => {
     }));
   };
 
+  const handleUrlPrefixChange = (uid: string, value: string) => {
+    setSettings((prev) => ({
+      ...prev,
+      enabledContentTypes: {
+        ...prev.enabledContentTypes,
+        [uid]: {
+          ...prev.enabledContentTypes[uid],
+          enabled: prev.enabledContentTypes[uid]?.enabled ?? false,
+          slugField: prev.enabledContentTypes[uid]?.slugField ?? null,
+          urlPrefix: value,
+        },
+      },
+    }));
+  };
+
   const handleSave = async () => {
     setIsSaving(true);
     try {
@@ -159,33 +175,39 @@ const Settings = () => {
           <Typography variant="delta" tag="h2" paddingBottom={4}>
             Features
           </Typography>
-          <Flex direction="column" gap={4} alignItems="flex-start">
-            <Toggle
-              checked={settings.autoRedirectOnSlugChange}
-              onChange={() => handleFeatureToggle('autoRedirectOnSlugChange')}
-              onLabel="On"
-              offLabel="Off"
-              aria-label="Auto-create redirect on slug change"
-            />
-            <Typography>Auto-create redirect when slug changes</Typography>
+          <Flex direction="column" gap={5} alignItems="flex-start">
+            <Box>
+              <Typography paddingBottom={1} fontWeight="bold">Auto-create redirect when slug changes</Typography>
+              <Toggle
+                checked={settings.autoRedirectOnSlugChange}
+                onChange={() => handleFeatureToggle('autoRedirectOnSlugChange')}
+                onLabel="On"
+                offLabel="Off"
+                aria-label="Auto-create redirect on slug change"
+              />
+            </Box>
 
-            <Toggle
-              checked={settings.chainDetectionEnabled}
-              onChange={() => handleFeatureToggle('chainDetectionEnabled')}
-              onLabel="On"
-              offLabel="Off"
-              aria-label="Enable chain detection"
-            />
-            <Typography>Enable chain detection (blocks chains longer than 10 hops)</Typography>
+            <Box>
+              <Typography paddingBottom={1} fontWeight="bold">Enable chain detection (blocks chains longer than 10 hops)</Typography>
+              <Toggle
+                checked={settings.chainDetectionEnabled}
+                onChange={() => handleFeatureToggle('chainDetectionEnabled')}
+                onLabel="On"
+                offLabel="Off"
+                aria-label="Enable chain detection"
+              />
+            </Box>
 
-            <Toggle
-              checked={settings.orphanRedirectEnabled}
-              onChange={() => handleFeatureToggle('orphanRedirectEnabled')}
-              onLabel="On"
-              offLabel="Off"
-              aria-label="Enable orphan redirect tracking"
-            />
-            <Typography>Enable orphan redirect tracking (creates pending entries on content deletion)</Typography>
+            <Box>
+              <Typography paddingBottom={1} fontWeight="bold">Enable orphan redirect tracking (creates pending entries on content deletion)</Typography>
+              <Toggle
+                checked={settings.orphanRedirectEnabled}
+                onChange={() => handleFeatureToggle('orphanRedirectEnabled')}
+                onLabel="On"
+                offLabel="Off"
+                aria-label="Enable orphan redirect tracking"
+              />
+            </Box>
           </Flex>
         </Box>
 
@@ -193,7 +215,7 @@ const Settings = () => {
         <Typography variant="delta" tag="h2" paddingBottom={4}>
           Content Types
         </Typography>
-        <Table colCount={3} rowCount={contentTypes.length}>
+        <Table colCount={4} rowCount={contentTypes.length}>
           <Thead>
             <Tr>
               <Th>
@@ -204,6 +226,9 @@ const Settings = () => {
               </Th>
               <Th>
                 <Typography variant="sigma">Slug Field</Typography>
+              </Th>
+              <Th>
+                <Typography variant="sigma">URL Prefix</Typography>
               </Th>
             </Tr>
           </Thead>
@@ -241,6 +266,17 @@ const Settings = () => {
                         </SingleSelectOption>
                       ))}
                     </SingleSelect>
+                  </Td>
+                  <Td>
+                    <TextInput
+                      placeholder="/blog"
+                      value={ctSettings.urlPrefix ?? ''}
+                      onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                        handleUrlPrefixChange(ct.uid, e.target.value)
+                      }
+                      disabled={!ctSettings.enabled}
+                      aria-label={`URL prefix for ${ct.displayName}`}
+                    />
                   </Td>
                 </Tr>
               );

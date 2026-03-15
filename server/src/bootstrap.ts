@@ -3,6 +3,7 @@ import type { Core } from '@strapi/strapi';
 type LifecycleEvent = {
   model: { uid: string; options?: { draftAndPublish?: boolean } };
   params: { where?: { id?: number }; data?: Record<string, unknown> };
+  // state is typed as unknown so afterXXX handlers can read values set by beforeXXX
   state: Record<string, unknown>;
   result?: Record<string, unknown>;
 };
@@ -30,11 +31,42 @@ const bootstrap = async ({ strapi }: { strapi: Core.Strapi }) => {
 
       const existing = await strapi.db.query(uid as Parameters<typeof strapi.db.query>[0]).findOne({
         where: { id },
-        select: [config.slugField],
+        select: [config.slugField, 'documentId'],
       });
+
+      // Strapi v5 D&P: the DB stores separate draft (publishedAt=null) and
+      // published (publishedAt!=null) rows sharing the same documentId.
+      // Slug edits always land on the draft row first; a subsequent "Publish"
+      // copies the draft to the published row without changing the slug.
+      //
+      // To decide whether an auto-redirect is warranted we check whether a
+      // *published* row already exists for this document. If not, the content
+      // has never been public, so no redirect is needed.
+      const data = event.params.data ?? {};
+      const hasDraftAndPublish = 'publishedAt' in data;
+      let hasPublishedVersion = false;
+
+      if (hasDraftAndPublish && existing) {
+        const documentId = (existing as Record<string, unknown>)['documentId'] ??
+          data['documentId'];
+        if (documentId) {
+          const published = await strapi.db
+            .query(uid as Parameters<typeof strapi.db.query>[0])
+            .findOne({
+              where: {
+                documentId: documentId as string,
+                publishedAt: { $notNull: true },
+              },
+              select: ['id'],
+            });
+          hasPublishedVersion = !!published;
+        }
+      }
 
       event.state = {
         oldSlug: (existing as Record<string, unknown> | null)?.[config.slugField] ?? null,
+        hasDraftAndPublish,
+        hasPublishedVersion,
       };
     },
 
@@ -51,11 +83,10 @@ const bootstrap = async ({ strapi }: { strapi: Core.Strapi }) => {
       const config = settings.enabledContentTypes[uid];
       if (!config?.enabled || !config.slugField) return;
 
-      // draftAndPublish guard — skip if model supports drafts and entry is not yet published
-      const isDraft =
-        event.model.options?.draftAndPublish === true &&
-        !event.result?.['publishedAt'];
-      if (isDraft) return;
+      // Strapi v5 D&P guard: only create redirects when the entry has been
+      // published at least once. Never-published content has no public URL,
+      // so a redirect would be pointless.
+      if (event.state?.hasDraftAndPublish && !event.state?.hasPublishedVersion) return;
 
       const newSlug = event.result?.[config.slugField];
       if (typeof newSlug !== 'string' || !newSlug || oldSlug === newSlug) return;

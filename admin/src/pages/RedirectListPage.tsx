@@ -287,12 +287,14 @@ const RedirectListPage = () => {
                     <Flex gap={2}>
                       <IconButton
                         label="Edit"
+                        withTooltip={false}
                         onClick={() => openEditModal(redirect)}
                       >
                         <Pencil />
                       </IconButton>
                       <IconButton
                         label="Delete"
+                        withTooltip={false}
                         onClick={() => openDeleteDialog(redirect.id)}
                       >
                         <Trash />
