@@ -1,6 +1,7 @@
 import type { Core } from '@strapi/strapi';
 
 import type { Redirect, CreateRedirectInput, UpdateRedirectInput } from '../types/redirect';
+import { invalidateCache } from '../middlewares/redirect';
 
 const UID = 'plugin::redirect-manager.redirect' as const;
 
@@ -110,6 +111,7 @@ const redirectService = ({ strapi }: { strapi: Core.Strapi }) => ({
     }
 
     const result = await strapi.db.query(UID).create({ data });
+    invalidateCache();
     return result as Redirect;
   },
 
@@ -128,11 +130,13 @@ const redirectService = ({ strapi }: { strapi: Core.Strapi }) => ({
       where: { id },
       data,
     });
+    invalidateCache();
     return result as Redirect;
   },
 
   async delete(id: number): Promise<void> {
     await strapi.db.query(UID).delete({ where: { id } });
+    invalidateCache();
   },
 
   async toggleActive(id: number): Promise<Redirect> {
@@ -149,6 +153,7 @@ const redirectService = ({ strapi }: { strapi: Core.Strapi }) => ({
       where: { id },
       data: { isActive: !current.isActive },
     });
+    invalidateCache();
     return result as Redirect;
   },
 });
