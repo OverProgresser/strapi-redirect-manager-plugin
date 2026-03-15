@@ -813,6 +813,80 @@ describe('redirectService', () => {
         expect(mockQuery.update).not.toHaveBeenCalled();
       });
 
+      it('should flatten chains when resolving orphan', async () => {
+        const orphan = { id: 5, from: '/blog/v2', status: 'pending', contentType: 'api::page.page', slug: 'v2' };
+        mockQuery.findOne.mockResolvedValueOnce(orphan); // orphan lookup
+        mockQuery.findOne.mockResolvedValueOnce(null);   // conflict check
+        mockQuery.create.mockResolvedValue({ id: 10, from: '/blog/v2', to: '/blog/final', type: 'permanent' });
+        // Chain flattening: one redirect points to orphan's from
+        mockQuery.findMany.mockResolvedValueOnce([
+          { id: 20, from: '/blog/v1', to: '/blog/v2', isActive: true },
+        ]);
+        mockQuery.update.mockResolvedValue({});
+
+        await service.resolveOrphan(5, '/blog/final');
+
+        // Should have queried for chaining redirects
+        expect(mockQuery.findMany).toHaveBeenCalledWith({
+          where: { to: '/blog/v2', isActive: true },
+        });
+        // Should have updated the chaining redirect to point to final destination
+        expect(mockQuery.update).toHaveBeenCalledWith({
+          where: { id: 20 },
+          data: { to: '/blog/final' },
+        });
+        // Should have marked orphan as resolved
+        expect(mockQuery.update).toHaveBeenCalledWith({
+          where: { id: 5 },
+          data: { status: 'resolved' },
+        });
+      });
+
+      it('should flatten multiple chaining redirects', async () => {
+        const orphan = { id: 6, from: '/page/b', status: 'pending', contentType: 'api::page.page', slug: 'b' };
+        mockQuery.findOne.mockResolvedValueOnce(orphan);
+        mockQuery.findOne.mockResolvedValueOnce(null);
+        mockQuery.create.mockResolvedValue({ id: 11, from: '/page/b', to: '/page/final', type: 'permanent' });
+        mockQuery.findMany.mockResolvedValueOnce([
+          { id: 30, from: '/page/a1', to: '/page/b', isActive: true },
+          { id: 31, from: '/page/a2', to: '/page/b', isActive: true },
+        ]);
+        mockQuery.update.mockResolvedValue({});
+
+        await service.resolveOrphan(6, '/page/final');
+
+        expect(mockQuery.update).toHaveBeenCalledWith({
+          where: { id: 30 },
+          data: { to: '/page/final' },
+        });
+        expect(mockQuery.update).toHaveBeenCalledWith({
+          where: { id: 31 },
+          data: { to: '/page/final' },
+        });
+      });
+
+      it('should skip flattening when no chaining redirects exist', async () => {
+        const orphan = { id: 7, from: '/solo', status: 'pending', contentType: 'api::page.page', slug: 'solo' };
+        mockQuery.findOne.mockResolvedValueOnce(orphan);
+        mockQuery.findOne.mockResolvedValueOnce(null);
+        mockQuery.create.mockResolvedValue({ id: 12, from: '/solo', to: '/dest', type: 'permanent' });
+        mockQuery.findMany.mockResolvedValueOnce([]); // no chaining redirects
+        mockQuery.update.mockResolvedValue({});
+
+        await service.resolveOrphan(7, '/dest');
+
+        // findMany was called for chain flattening
+        expect(mockQuery.findMany).toHaveBeenCalledWith({
+          where: { to: '/solo', isActive: true },
+        });
+        // update only called once — for marking orphan resolved (no chain updates)
+        expect(mockQuery.update).toHaveBeenCalledTimes(1);
+        expect(mockQuery.update).toHaveBeenCalledWith({
+          where: { id: 7 },
+          data: { status: 'resolved' },
+        });
+      });
+
       it('should throw if a redirect from the same from already exists (conflict)', async () => {
         const orphan = { id: 3, from: '/conflict-path', status: 'pending' };
         const existingRedirect = { id: 99, from: '/conflict-path', to: '/somewhere' };

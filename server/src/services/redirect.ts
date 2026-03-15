@@ -232,6 +232,22 @@ const redirectService = ({ strapi }: { strapi: Core.Strapi }) => {
       // Create the actual redirect (runs through conflict + chain detection)
       await svc.create({ from: orphanRecord.from, to, type: 'permanent' });
 
+      // Chain flattening: rewrite any redirect whose `to` points to the
+      // orphan's old path so it goes directly to the new destination.
+      const chainingRedirects = await strapi.db.query(UID).findMany({
+        where: { to: orphanRecord.from, isActive: true },
+      });
+      for (const r of chainingRedirects) {
+        const redirect = r as Redirect;
+        await strapi.db.query(UID).update({
+          where: { id: redirect.id },
+          data: { to },
+        });
+      }
+      if (chainingRedirects.length > 0) {
+        invalidateCache();
+      }
+
       // Mark orphan as resolved
       await strapi.db.query(ORPHAN_UID).update({
         where: { id },
