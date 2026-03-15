@@ -5,3 +5,11 @@ dist/
 .DS_Store
 *.log
 .cache/
+
+# Claude Code (dev tooling — not part of the plugin)
+.claude/
+CLAUDE.md
+
+# Internal docs
+PRD.md
+docs/

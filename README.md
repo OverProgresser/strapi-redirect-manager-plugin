@@ -1,21 +1,24 @@
-# Strapi Redirect Manager Plugin
+# Strapi Redirect Manager
 
-A production-ready redirect management plugin for **Strapi v5**.
-Manage 301/302 redirects from the admin panel, automatically create redirects when content slugs change, detect redirect chains, and track orphaned URLs from deleted content.
+A redirect management plugin for **Strapi v5**.
+Manage 301/302 redirects from the admin panel without touching code or redeploying.
 
-## Features
+## What it does
 
-- **Manual redirect CRUD** — Create, edit, delete, and toggle 301/302 redirects from the admin panel
-- **Runtime middleware** — Intercepts requests at the server level with an in-memory cache for performance
-- **Slug auto-redirect** — When a content type's slug field changes, a redirect is automatically created from the old URL to the new one
-- **Chain detection** — Prevents redirect chains longer than 10 hops and detects cycles before they are saved
-- **Orphan redirect tracking** — When slug-tracked content is deleted, a pending orphan entry is created so you can decide where to redirect the old URL
-- **Plugin settings** — Configure which content types participate in auto-redirect, set URL prefixes per content type, and toggle each feature independently
+| Feature | Description |
+|---|---|
+| **Manual redirects** | Create, edit, delete, and toggle redirects from the admin panel |
+| **Runtime middleware** | Intercepts HTTP requests with an in-memory cache — no DB hit per request |
+| **Slug auto-redirect** | Slug changes on content types automatically create a redirect from the old URL |
+| **Chain & cycle detection** | Blocks saves that would create chains longer than 10 hops or redirect cycles |
+| **Orphan redirect queue** | Deleted content creates a pending entry so you can redirect or dismiss its old URL |
 
 ## Requirements
 
-- Strapi v5 (`>=5.0.0 <6.0.0`)
-- Node.js `>=18.0.0`
+- Strapi `>=5.0.0 <6.0.0`
+- Node.js `>=20.0.0` (Strapi v5 requirement)
+
+---
 
 ## Installation
 
@@ -23,7 +26,7 @@ Manage 301/302 redirects from the admin panel, automatically create redirects wh
 npm install strapi-plugin-redirect-manager
 ```
 
-Add to your Strapi project's `config/plugins.ts` (or `.js`):
+Add to `config/plugins.ts`:
 
 ```ts
 export default {
@@ -33,78 +36,153 @@ export default {
 };
 ```
 
-## Usage
+Rebuild and restart:
 
-### Admin Panel
+```bash
+npm run build
+npm run develop
+```
 
-After installing, the plugin appears in the left sidebar as **Redirect Manager**.
+The plugin appears in the left sidebar as **Redirect Manager**.
 
-#### Redirect List
+---
 
-- View all redirects in a table (`from`, `to`, `type`, active status)
-- Add new redirects with the **New Redirect** button
-- Edit or delete existing redirects
-- Toggle individual redirects on/off without deleting them
+## User Guide
 
-#### Orphan Redirects
+### 1. Creating a redirect
 
-Accessible via the **Orphan Redirects** button in the header. When content with a tracked slug is deleted, a pending entry appears here. You can:
+1. Click **Redirect Manager** in the sidebar.
+2. Click **New Redirect** (top right).
+3. Fill in the form:
 
-- **Resolve** — Enter a destination path and create a 301 redirect. Any existing redirects that pointed to the orphan's old URL are automatically updated to point to the new destination (chain flattening).
-- **Dismiss** — Mark as dismissed without creating a redirect
+   | Field | Description | Example |
+   |---|---|---|
+   | From | Source path — must start with `/` | `/old-page` |
+   | To | Destination path — must start with `/` | `/new-page` |
+   | Type | `301 — Permanent` or `302 — Temporary` | `301 — Permanent` |
+   | Active | Whether the redirect is live | On |
+   | Comment | Optional note for your team | `SEO migration 2026-03` |
 
-#### Settings
+4. Click **Create**.
 
-Found under **Settings > Redirect Manager > Configuration**.
+The redirect is immediately active — no deploy needed.
 
-| Setting | Description |
+> **Note:** External URLs (`https://example.com`) are not accepted in the **To** field. The plugin only handles internal path redirects.
+
+---
+
+### 2. Editing or deleting a redirect
+
+- Click the **pencil icon** on any row to edit.
+- Click the **trash icon** to delete (a confirmation dialog appears).
+- Use the **toggle** in the Active column to pause/resume a redirect without deleting it.
+
+---
+
+### 3. Setting up slug auto-redirect
+
+When a content entry's slug changes, the plugin can automatically create a redirect from the old URL to the new one.
+
+1. Go to **Settings → Redirect Manager → Configuration**.
+2. Make sure **Auto-create redirect when slug changes** is **On**.
+3. In the Content Types table, find the content type you want to track.
+4. Check the **Enabled** checkbox for that row.
+5. Select the **Slug Field** (must be a `string` or `uid` attribute).
+6. Optionally enter a **URL Prefix** (e.g. `/blog`).
+7. Click **Save**.
+
+**Example:** With URL prefix `/blog` and slug field `slug`, changing an article's slug from `my-post` to `updated-post` automatically creates:
+
+```
+/blog/my-post  →  /blog/updated-post  (301)
+```
+
+> **Draft & Publish:** Auto-redirects are only created for entries that have been published at least once. Drafts that have never been published are skipped.
+
+---
+
+### 4. Managing orphan redirects
+
+When a tracked content entry is deleted, its URL becomes a dead end (404). The plugin captures this as a **pending orphan** so you can decide what to do.
+
+1. From the Redirect Manager page, click **Orphan Redirects** (top right).
+2. You'll see a list of deleted content URLs with their original content type and slug.
+3. For each entry, choose:
+
+   - **Resolve** — Enter a destination path and click **Create Redirect**. A 301 redirect is created. Any existing redirects that pointed to the old URL are automatically updated to point to the new destination (chain flattening).
+   - **Dismiss** — Ignore the orphan. No redirect is created.
+
+---
+
+### 5. Settings reference
+
+Go to **Settings → Redirect Manager → Configuration**.
+
+| Setting | Default | Description |
+|---|---|---|
+| Auto-create redirect when slug changes | On | Creates a redirect automatically when a tracked content slug is updated |
+| Enable chain detection | On | Blocks saves that would create chains longer than 10 hops or cycles |
+| Enable orphan redirect tracking | On | Creates a pending orphan entry when tracked content is deleted |
+
+**Content Types table:**
+
+| Column | Description |
 |---|---|
-| Auto-redirect on slug change | Create a redirect automatically when a content slug changes |
-| Chain detection | Block saves that would create chains longer than 10 hops or cycles |
-| Orphan redirect tracking | Create pending orphan entries when slug-tracked content is deleted |
-| Content types | Enable per content type, select the slug field, and set an optional URL prefix |
+| Content Type | Your Strapi model (e.g. `Article`) |
+| Enabled | Whether this content type participates in auto-redirect and orphan tracking |
+| Slug Field | The attribute used as the URL slug |
+| URL Prefix | Prepended to the slug to form the full path (e.g. `/blog`) |
 
-### Slug Auto-Redirect Setup
+---
 
-1. Go to **Settings > Redirect Manager > Configuration**
-2. Enable **Auto-redirect on slug change**
-3. In the Content Types table, enable a content type (e.g. `api::article.article`)
-4. Select the slug field (must be a `string` or `uid` attribute)
-5. Optionally set a URL prefix (e.g. `/blog`)
+## How the redirect works at runtime
 
-Now when an article's slug changes from `my-post` to `my-updated-post`, a redirect `/blog/my-post → /blog/my-updated-post` is created automatically.
+The plugin registers a Koa middleware that runs on every HTTP request:
 
-**Note:** Redirects are only created for published entries when `draftAndPublish` is enabled on the content type.
+1. Normalizes the request path (trailing slashes are stripped: `/foo/` → `/foo`).
+2. Looks up the normalized path in an in-memory cache (`Map<from, {to, type}>`). Matching is **exact** — no regex or wildcards.
+3. If a match is found → responds with the configured status code (301 or 302) and a `Location` header.
+4. If no match → passes the request to the next handler.
+
+The cache is populated lazily on first request and invalidated automatically whenever redirects are created, updated, deleted, or toggled.
+
+---
 
 ## Security
 
-- All admin routes are protected by Strapi's admin JWT — no public access
-- `from` and `to` fields must start with `/` — external URLs and protocol-relative URLs are rejected
-- No stack traces or internal paths are exposed in error responses
-- The `Location` response header is never set directly from raw user input
+- All routes require a valid Strapi admin JWT — no public endpoints.
+- `from` and `to` must start with `/`. External URLs and protocol-relative URLs (`//`) are rejected.
+- The middleware skips any cached entry whose `to` value starts with `http://` or `https://`.
+- Error responses never expose stack traces or internal file paths.
 
-## API Routes
+---
 
-All routes require admin authentication (`type: 'admin'`).
+## API reference
+
+All endpoints require admin authentication (`type: 'admin'`).
 
 | Method | Path | Description |
 |---|---|---|
 | `GET` | `/redirect-manager/redirects` | List all redirects |
-| `POST` | `/redirect-manager/redirects` | Create redirect |
-| `GET` | `/redirect-manager/redirects/:id` | Get single redirect |
-| `PUT` | `/redirect-manager/redirects/:id` | Update redirect |
-| `DELETE` | `/redirect-manager/redirects/:id` | Delete redirect |
+| `POST` | `/redirect-manager/redirects` | Create a redirect |
+| `GET` | `/redirect-manager/redirects/:id` | Get a redirect |
+| `PUT` | `/redirect-manager/redirects/:id` | Update a redirect |
+| `DELETE` | `/redirect-manager/redirects/:id` | Delete a redirect |
 | `PUT` | `/redirect-manager/redirects/:id/toggle` | Toggle active state |
 | `GET` | `/redirect-manager/settings` | Get plugin settings |
 | `POST` | `/redirect-manager/settings` | Save plugin settings |
-| `GET` | `/redirect-manager/content-types` | List available content types |
+| `GET` | `/redirect-manager/content-types` | List trackable content types |
 | `GET` | `/redirect-manager/orphan-redirects` | List pending orphan redirects |
-| `PUT` | `/redirect-manager/orphan-redirects/:id/resolve` | Resolve orphan (creates redirect) |
-| `PUT` | `/redirect-manager/orphan-redirects/:id/dismiss` | Dismiss orphan |
+| `PUT` | `/redirect-manager/orphan-redirects/:id/resolve` | Resolve an orphan |
+| `PUT` | `/redirect-manager/orphan-redirects/:id/dismiss` | Dismiss an orphan |
 
-## Out of Scope
+---
 
-CSV bulk import, locale-aware redirects, A/B redirects, analytics, regex/wildcard matching, import/export.
+## Out of scope (v1)
+
+Regex/wildcard matching, external URL redirects, CSV import/export, locale-aware redirects, analytics tracking, A/B redirects.
+
+---
 
 ## License
 
