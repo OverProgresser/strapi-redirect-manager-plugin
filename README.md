@@ -50,7 +50,7 @@ After installing, the plugin appears in the left sidebar as **Redirect Manager**
 
 Accessible via the **Orphan Redirects** button in the header. When content with a tracked slug is deleted, a pending entry appears here. You can:
 
-- **Resolve** — Enter a destination path and create a 301 redirect
+- **Resolve** — Enter a destination path and create a 301 redirect. Any existing redirects that pointed to the orphan's old URL are automatically updated to point to the new destination (chain flattening).
 - **Dismiss** — Mark as dismissed without creating a redirect
 
 #### Settings
