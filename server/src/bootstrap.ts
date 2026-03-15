@@ -120,11 +120,40 @@ const bootstrap = async ({ strapi }: { strapi: Core.Strapi }) => {
       const config = settings.enabledContentTypes[uid];
       if (!config?.enabled || !config.slugField) return;
 
+      const result = event.result ?? {};
+      const hasPublishedAtField = Object.prototype.hasOwnProperty.call(result, 'publishedAt');
+      const isDraftAndPublishModel = event.model.options?.draftAndPublish === true ||
+        (event.model.options?.draftAndPublish !== false && hasPublishedAtField);
+
+      // Strapi v5 D&P deletion emits two lifecycle events (draft + published).
+      // Only the published row had a public URL, so only that event should
+      // generate an orphan redirect.
+      if (isDraftAndPublishModel && result['publishedAt'] == null) return;
+
       const slug = event.result?.[config.slugField];
       if (typeof slug !== 'string' || !slug) return;
 
+      // Strapi v5 also fires afterDelete on the old published row when a slug
+      // change is published (it deletes the old row and creates a new one).
+      // Only create an orphan if the document is truly gone — no rows remain.
+      const documentId = (result as Record<string, unknown>)['documentId'];
+      if (documentId) {
+        const surviving = await strapi.db
+          .query(uid as Parameters<typeof strapi.db.query>[0])
+          .findOne({
+            where: { documentId: documentId as string },
+            select: ['id'],
+          });
+        if (surviving) return;
+      }
+
       const urlPrefix = config.urlPrefix ?? '';
       const from = `${urlPrefix}/${slug}`.replace('//', '/');
+
+      // Keep a single pending orphan per path.
+      await strapi.db.query(ORPHAN_UID).deleteMany({
+        where: { from, status: 'pending' },
+      });
 
       try {
         await strapi.db.query(ORPHAN_UID).create({

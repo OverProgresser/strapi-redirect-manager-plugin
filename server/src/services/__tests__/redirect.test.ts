@@ -22,6 +22,11 @@ const mockStrapi = {
   db: {
     query: jest.fn().mockReturnValue(mockQuery),
   },
+  log: {
+    info: jest.fn(),
+    warn: jest.fn(),
+    error: jest.fn(),
+  },
   store: jest.fn().mockReturnValue(mockStoreData),
   contentTypes: {
     'api::page.page': {

@@ -49,6 +49,7 @@ const mockOrphanQuery = {
   create: jest.fn(),
   update: jest.fn(),
   delete: jest.fn(),
+  deleteMany: jest.fn(),
 };
 
 const mockRedirectService = {
@@ -990,6 +991,92 @@ describe('bootstrap', () => {
       expect(mockOrphanQuery.create).not.toHaveBeenCalled();
     });
 
+    it('should return early for draft row on D&P delete (publishedAt is null)', async () => {
+      mockRedirectService.getSettings.mockResolvedValue(makeSettings());
+
+      const event: LifecycleEvent = {
+        model: { uid: 'api::page.page', options: { draftAndPublish: true } },
+        params: {},
+        state: {},
+        result: { slug: 'some-slug', publishedAt: null },
+      };
+
+      await subscribedHandler.afterDelete(event);
+
+      expect(mockOrphanQuery.deleteMany).not.toHaveBeenCalled();
+      expect(mockOrphanQuery.create).not.toHaveBeenCalled();
+    });
+
+    it('should create orphan for published row on D&P delete when document is truly gone', async () => {
+      mockRedirectService.getSettings.mockResolvedValue(makeSettings());
+      mockOrphanQuery.create.mockResolvedValue({ id: 1, from: '/some-slug', status: 'pending' });
+      // No surviving rows — document is truly deleted
+      mockContentQuery.findOne.mockResolvedValueOnce(null);
+
+      const event: LifecycleEvent = {
+        model: { uid: 'api::page.page', options: { draftAndPublish: true } },
+        params: {},
+        state: {},
+        result: { slug: 'some-slug', publishedAt: '2026-03-15T10:00:00.000Z', documentId: 'doc-123' },
+      };
+
+      await subscribedHandler.afterDelete(event);
+
+      // Should check if document still has surviving rows
+      expect(mockContentQuery.findOne).toHaveBeenCalledWith({
+        where: { documentId: 'doc-123' },
+        select: ['id'],
+      });
+      expect(mockOrphanQuery.deleteMany).toHaveBeenCalledWith({
+        where: { from: '/some-slug', status: 'pending' },
+      });
+      expect(mockOrphanQuery.create).toHaveBeenCalledWith({
+        data: {
+          contentType: 'api::page.page',
+          slug: 'some-slug',
+          from: '/some-slug',
+          status: 'pending',
+        },
+      });
+    });
+
+    it('should NOT create orphan when document still has surviving rows (slug update publish)', async () => {
+      mockRedirectService.getSettings.mockResolvedValue(makeSettings());
+      // Surviving row exists — this is a slug change publish, not a real delete
+      mockContentQuery.findOne.mockResolvedValueOnce({ id: 99 });
+
+      const event: LifecycleEvent = {
+        model: { uid: 'api::page.page', options: { draftAndPublish: true } },
+        params: {},
+        state: {},
+        result: { slug: 'old-slug', publishedAt: '2026-03-15T10:00:00.000Z', documentId: 'doc-456' },
+      };
+
+      await subscribedHandler.afterDelete(event);
+
+      expect(mockContentQuery.findOne).toHaveBeenCalledWith({
+        where: { documentId: 'doc-456' },
+        select: ['id'],
+      });
+      expect(mockOrphanQuery.create).not.toHaveBeenCalled();
+    });
+
+    it('should infer D&P from publishedAt field when model options are missing', async () => {
+      mockRedirectService.getSettings.mockResolvedValue(makeSettings());
+
+      const event: LifecycleEvent = {
+        model: { uid: 'api::page.page' },
+        params: {},
+        state: {},
+        result: { slug: 'some-slug', publishedAt: null },
+      };
+
+      await subscribedHandler.afterDelete(event);
+
+      expect(mockOrphanQuery.deleteMany).not.toHaveBeenCalled();
+      expect(mockOrphanQuery.create).not.toHaveBeenCalled();
+    });
+
     it('should create orphan redirect when all conditions met', async () => {
       mockRedirectService.getSettings.mockResolvedValue(makeSettings());
       mockOrphanQuery.create.mockResolvedValue({ id: 1, from: '/some-slug', status: 'pending' });
@@ -1004,6 +1091,9 @@ describe('bootstrap', () => {
       await subscribedHandler.afterDelete(event);
 
       expect(mockStrapi.db.query).toHaveBeenCalledWith('plugin::redirect-manager.orphan-redirect');
+      expect(mockOrphanQuery.deleteMany).toHaveBeenCalledWith({
+        where: { from: '/some-slug', status: 'pending' },
+      });
       expect(mockOrphanQuery.create).toHaveBeenCalledWith({
         data: {
           contentType: 'api::page.page',
