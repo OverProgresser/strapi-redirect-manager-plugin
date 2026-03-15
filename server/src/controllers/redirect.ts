@@ -157,7 +157,7 @@ const redirectController = ({ strapi }: { strapi: Core.Strapi }) => {
     },
 
     // ---------------------------------------------------------------------------
-    // Settings handlers (preserved from existing controller)
+    // Settings
     // ---------------------------------------------------------------------------
 
     async getSettings(ctx: KoaContext) {
@@ -169,8 +169,8 @@ const redirectController = ({ strapi }: { strapi: Core.Strapi }) => {
       const {
         enabledContentTypes,
         autoRedirectOnSlugChange,
-        showChainWarning,
-        showOrphanNotification,
+        chainDetectionEnabled,
+        orphanRedirectEnabled,
       } = body;
 
       // Validate enabledContentTypes entries
@@ -215,14 +215,65 @@ const redirectController = ({ strapi }: { strapi: Core.Strapi }) => {
       const saveData: PluginSettings = {
         enabledContentTypes: rawEct as PluginSettings['enabledContentTypes'],
         autoRedirectOnSlugChange: autoRedirectOnSlugChange !== false,
-        showChainWarning: showChainWarning !== false,
-        showOrphanNotification: showOrphanNotification !== false,
+        chainDetectionEnabled: chainDetectionEnabled !== false,
+        orphanRedirectEnabled: orphanRedirectEnabled !== false,
       };
       ctx.body = await service().saveSettings(saveData);
     },
 
     async getContentTypes(ctx: KoaContext) {
       ctx.body = await service().getContentTypes();
+    },
+
+    // ---------------------------------------------------------------------------
+    // Orphan redirect handlers
+    // ---------------------------------------------------------------------------
+
+    async getOrphans(ctx: KoaContext) {
+      const orphans = await service().findAllOrphans();
+      ctx.body = { data: orphans };
+    },
+
+    async resolveOrphan(ctx: KoaContext) {
+      const id = Number(ctx.params['id']);
+      if (Number.isNaN(id)) {
+        return ctx.badRequest('Invalid id parameter.');
+      }
+
+      const body = ctx.request.body as Record<string, unknown>;
+      const toError = validateSlugPath(body['to'], 'to');
+      if (toError) return ctx.badRequest(toError);
+
+      try {
+        await service().resolveOrphan(id, body['to'] as string);
+        ctx.status = 204;
+        ctx.body = null;
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Failed to resolve orphan redirect.';
+        if (message.includes('not found')) {
+          return ctx.notFound(message);
+        }
+        return ctx.badRequest(message);
+      }
+    },
+
+    async dismissOrphan(ctx: KoaContext) {
+      const id = Number(ctx.params['id']);
+      if (Number.isNaN(id)) {
+        return ctx.badRequest('Invalid id parameter.');
+      }
+
+      try {
+        await service().dismissOrphan(id);
+        ctx.status = 204;
+        ctx.body = null;
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Failed to dismiss orphan redirect.';
+        if (message.includes('not found')) {
+          return ctx.notFound(message);
+        }
+        return ctx.internalServerError(message);
+      }
     },
   };
 };

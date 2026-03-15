@@ -7,6 +7,8 @@ type LifecycleEvent = {
   result?: Record<string, unknown>;
 };
 
+const ORPHAN_UID = 'plugin::redirect-manager.orphan-redirect' as const;
+
 const bootstrap = async ({ strapi }: { strapi: Core.Strapi }) => {
   strapi.log.info('[redirect-manager] Bootstrapped.');
 
@@ -73,6 +75,38 @@ const bootstrap = async ({ strapi }: { strapi: Core.Strapi }) => {
         // If a redirect from this path already exists, skip silently (race condition)
         strapi.log.warn(
           `[redirect-manager] Could not create auto-redirect from '${from}' to '${to}': ${(err as Error).message}`,
+        );
+      }
+    },
+
+    async afterDelete(event: LifecycleEvent) {
+      const uid = event.model.uid;
+      if (!uid.startsWith('api::')) return;
+
+      const settings = await redirectService.getSettings();
+      if (!settings.orphanRedirectEnabled) return;
+
+      const config = settings.enabledContentTypes[uid];
+      if (!config?.enabled || !config.slugField) return;
+
+      const slug = event.result?.[config.slugField];
+      if (typeof slug !== 'string' || !slug) return;
+
+      const urlPrefix = config.urlPrefix ?? '';
+      const from = `${urlPrefix}/${slug}`.replace('//', '/');
+
+      try {
+        await strapi.db.query(ORPHAN_UID).create({
+          data: {
+            contentType: uid,
+            slug,
+            from,
+            status: 'pending',
+          },
+        });
+      } catch (err) {
+        strapi.log.warn(
+          `[redirect-manager] Could not create orphan redirect for '${from}': ${(err as Error).message}`,
         );
       }
     },

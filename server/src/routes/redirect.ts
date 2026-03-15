@@ -20,7 +20,7 @@ export default {
       handler: 'redirect.getContentTypes',
       config: { policies: [] },
     },
-    // CRUD routes
+    // Redirect CRUD routes
     {
       method: 'GET',
       path: '/redirects',
@@ -55,6 +55,25 @@ export default {
       method: 'PUT',
       path: '/redirects/:id/toggle',
       handler: 'redirect.toggleActive',
+      config: { policies: [] },
+    },
+    // Orphan redirect routes
+    {
+      method: 'GET',
+      path: '/orphan-redirects',
+      handler: 'redirect.getOrphans',
+      config: { policies: [] },
+    },
+    {
+      method: 'PUT',
+      path: '/orphan-redirects/:id/resolve',
+      handler: 'redirect.resolveOrphan',
+      config: { policies: [] },
+    },
+    {
+      method: 'PUT',
+      path: '/orphan-redirects/:id/dismiss',
+      handler: 'redirect.dismissOrphan',
       config: { policies: [] },
     },
   ],

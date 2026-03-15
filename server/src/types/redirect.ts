@@ -24,3 +24,13 @@ export interface UpdateRedirectInput {
   isActive?: boolean;
   comment?: string;
 }
+
+export interface OrphanRedirect {
+  id: number;
+  contentType: string;
+  slug: string;
+  from: string;
+  status: 'pending' | 'resolved' | 'dismissed';
+  createdAt: string;
+  updatedAt: string;
+}

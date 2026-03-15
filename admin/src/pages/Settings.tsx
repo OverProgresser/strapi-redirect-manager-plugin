@@ -35,15 +35,15 @@ interface ContentTypeSettings {
 interface PluginSettings {
   enabledContentTypes: Record<string, ContentTypeSettings>;
   autoRedirectOnSlugChange: boolean;
-  showChainWarning: boolean;
-  showOrphanNotification: boolean;
+  chainDetectionEnabled: boolean;
+  orphanRedirectEnabled: boolean;
 }
 
 const DEFAULT_SETTINGS: PluginSettings = {
   enabledContentTypes: {},
   autoRedirectOnSlugChange: true,
-  showChainWarning: true,
-  showOrphanNotification: true,
+  chainDetectionEnabled: true,
+  orphanRedirectEnabled: true,
 };
 
 const Settings = () => {
@@ -170,22 +170,22 @@ const Settings = () => {
             <Typography>Auto-create redirect when slug changes</Typography>
 
             <Toggle
-              checked={settings.showChainWarning}
-              onChange={() => handleFeatureToggle('showChainWarning')}
+              checked={settings.chainDetectionEnabled}
+              onChange={() => handleFeatureToggle('chainDetectionEnabled')}
               onLabel="On"
               offLabel="Off"
-              aria-label="Show redirect chain warning"
+              aria-label="Enable chain detection"
             />
-            <Typography>Show redirect chain warning</Typography>
+            <Typography>Enable chain detection (blocks chains longer than 10 hops)</Typography>
 
             <Toggle
-              checked={settings.showOrphanNotification}
-              onChange={() => handleFeatureToggle('showOrphanNotification')}
+              checked={settings.orphanRedirectEnabled}
+              onChange={() => handleFeatureToggle('orphanRedirectEnabled')}
               onLabel="On"
               offLabel="Off"
-              aria-label="Show orphan redirect notification"
+              aria-label="Enable orphan redirect tracking"
             />
-            <Typography>Show orphan redirect notification</Typography>
+            <Typography>Enable orphan redirect tracking (creates pending entries on content deletion)</Typography>
           </Flex>
         </Box>
 

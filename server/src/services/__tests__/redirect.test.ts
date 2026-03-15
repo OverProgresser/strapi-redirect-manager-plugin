@@ -55,6 +55,15 @@ const service = redirectService({ strapi: mockStrapi });
 
 const UID = 'plugin::redirect-manager.redirect';
 
+// Default disabled-chain-detection settings — keeps existing CRUD tests unaffected.
+// Individual chain-detection tests override this per-test.
+const DEFAULT_TEST_SETTINGS = {
+  enabledContentTypes: {},
+  autoRedirectOnSlugChange: true,
+  chainDetectionEnabled: false,
+  orphanRedirectEnabled: true,
+};
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -62,6 +71,8 @@ const UID = 'plugin::redirect-manager.redirect';
 describe('redirectService', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    // Disable chain detection by default so existing CRUD tests need no changes.
+    mockStoreData.get.mockResolvedValue(DEFAULT_TEST_SETTINGS);
   });
 
   // -------------------------------------------------------------------------
@@ -87,8 +98,8 @@ describe('redirectService', () => {
           'api::page.page': { enabled: true, slugField: 'slug' },
         },
         autoRedirectOnSlugChange: false,
-        showChainWarning: false,
-        showOrphanNotification: false,
+        chainDetectionEnabled: false,
+        orphanRedirectEnabled: false,
       };
       mockStoreData.get.mockResolvedValue(storedSettings);
 
@@ -106,8 +117,8 @@ describe('redirectService', () => {
       expect(result).toEqual({
         enabledContentTypes: {},
         autoRedirectOnSlugChange: true,
-        showChainWarning: true,
-        showOrphanNotification: true,
+        chainDetectionEnabled: true,
+        orphanRedirectEnabled: true,
       });
     });
 
@@ -119,8 +130,8 @@ describe('redirectService', () => {
       expect(result).toEqual({
         enabledContentTypes: {},
         autoRedirectOnSlugChange: true,
-        showChainWarning: true,
-        showOrphanNotification: true,
+        chainDetectionEnabled: true,
+        orphanRedirectEnabled: true,
       });
     });
   });
@@ -132,8 +143,8 @@ describe('redirectService', () => {
           'api::page.page': { enabled: true, slugField: 'slug' },
         },
         autoRedirectOnSlugChange: true,
-        showChainWarning: true,
-        showOrphanNotification: true,
+        chainDetectionEnabled: true,
+        orphanRedirectEnabled: true,
       };
 
       const result = await service.saveSettings(settings);
@@ -320,7 +331,7 @@ describe('redirectService', () => {
 
   describe('create', () => {
     it('should create a redirect when no conflict exists', async () => {
-      // First call: conflict check findOne returns null
+      // Conflict check returns null (no existing redirect from /old-path)
       mockQuery.findOne.mockResolvedValue(null);
       const created = {
         id: 1,
@@ -424,7 +435,7 @@ describe('redirectService', () => {
 
       const result = await service.update(1, { to: '/updated-dest' });
 
-      // findOne should NOT be called for conflict check when from is undefined
+      // With chainDetectionEnabled: false (global beforeEach), findOne is NOT called
       expect(mockQuery.findOne).not.toHaveBeenCalled();
       expect(mockQuery.update).toHaveBeenCalledWith({
         where: { id: 1 },
@@ -582,6 +593,262 @@ describe('redirectService', () => {
       );
 
       expect(mockQuery.update).not.toHaveBeenCalled();
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Chain detection (Faza 6)
+  // -------------------------------------------------------------------------
+
+  describe('chain detection', () => {
+    const chainEnabledSettings = {
+      ...DEFAULT_TEST_SETTINGS,
+      chainDetectionEnabled: true,
+    };
+
+    beforeEach(() => {
+      mockStoreData.get.mockResolvedValue(chainEnabledSettings);
+    });
+
+    describe('create', () => {
+      it('should allow create when to path has no existing chain', async () => {
+        // Conflict check: no existing redirect from /a
+        // Chain check: /b has no outgoing redirect
+        mockQuery.findOne
+          .mockResolvedValueOnce(null)  // conflict check
+          .mockResolvedValueOnce(null); // chain check: /b has no redirect
+        const created = { id: 1, from: '/a', to: '/b', type: '301', isActive: true };
+        mockQuery.create.mockResolvedValue(created);
+
+        await expect(
+          service.create({ from: '/a', to: '/b', type: '301' }),
+        ).resolves.toEqual(created);
+
+        expect(mockQuery.create).toHaveBeenCalledWith({
+          data: { from: '/a', to: '/b', type: '301' },
+        });
+      });
+
+      it('should throw when chain exceeds 10 hops (11th hop)', async () => {
+        // 10 existing redirects: /1→/2→/3→...→/10→/11
+        // Creating /new→/1 would make an 11-hop chain
+        mockQuery.findOne
+          .mockResolvedValueOnce(null)                              // conflict check
+          .mockResolvedValueOnce({ from: '/1', to: '/2' })         // chain depth 1
+          .mockResolvedValueOnce({ from: '/2', to: '/3' })         // chain depth 2
+          .mockResolvedValueOnce({ from: '/3', to: '/4' })         // chain depth 3
+          .mockResolvedValueOnce({ from: '/4', to: '/5' })         // chain depth 4
+          .mockResolvedValueOnce({ from: '/5', to: '/6' })         // chain depth 5
+          .mockResolvedValueOnce({ from: '/6', to: '/7' })         // chain depth 6
+          .mockResolvedValueOnce({ from: '/7', to: '/8' })         // chain depth 7
+          .mockResolvedValueOnce({ from: '/8', to: '/9' })         // chain depth 8
+          .mockResolvedValueOnce({ from: '/9', to: '/10' })        // chain depth 9
+          .mockResolvedValueOnce({ from: '/10', to: '/11' });      // chain depth 10 → /11
+
+        await expect(
+          service.create({ from: '/new', to: '/1', type: '301' }),
+        ).rejects.toThrow('Redirect chain exceeds maximum depth of 10 hops.');
+
+        expect(mockQuery.create).not.toHaveBeenCalled();
+      });
+
+      it('should allow a chain of exactly 10 hops', async () => {
+        // 9 existing redirects: /1→...→/9→/10. Creating /new→/1 = 10 hops total.
+        mockQuery.findOne
+          .mockResolvedValueOnce(null)                         // conflict check
+          .mockResolvedValueOnce({ from: '/1', to: '/2' })    // depth 1
+          .mockResolvedValueOnce({ from: '/2', to: '/3' })    // depth 2
+          .mockResolvedValueOnce({ from: '/3', to: '/4' })    // depth 3
+          .mockResolvedValueOnce({ from: '/4', to: '/5' })    // depth 4
+          .mockResolvedValueOnce({ from: '/5', to: '/6' })    // depth 5
+          .mockResolvedValueOnce({ from: '/6', to: '/7' })    // depth 6
+          .mockResolvedValueOnce({ from: '/7', to: '/8' })    // depth 7
+          .mockResolvedValueOnce({ from: '/8', to: '/9' })    // depth 8
+          .mockResolvedValueOnce({ from: '/9', to: '/10' })   // depth 9
+          .mockResolvedValueOnce(null);                        // depth 10: /10 has no redirect → valid
+        const created = { id: 1, from: '/new', to: '/1', type: '301', isActive: true };
+        mockQuery.create.mockResolvedValue(created);
+
+        await expect(
+          service.create({ from: '/new', to: '/1', type: '301' }),
+        ).resolves.toEqual(created);
+
+        expect(mockQuery.create).toHaveBeenCalledWith({
+          data: { from: '/new', to: '/1', type: '301' },
+        });
+      });
+
+      it('should throw when chain contains a cycle (A→B exists, creating B→A)', async () => {
+        // Existing: /b → /a
+        // Creating: /a → /b  (would form cycle /a→/b→/a)
+        mockQuery.findOne
+          .mockResolvedValueOnce(null)                         // conflict check: no redirect from /a
+          .mockResolvedValueOnce({ from: '/b', to: '/a' });   // chain depth 1: /b → /a (cycle!)
+
+        await expect(
+          service.create({ from: '/a', to: '/b', type: '301' }),
+        ).rejects.toThrow('Redirect chain contains a cycle.');
+
+        expect(mockQuery.create).not.toHaveBeenCalled();
+      });
+
+      it('should skip chain check when chainDetectionEnabled is false', async () => {
+        mockStoreData.get.mockResolvedValue({ ...chainEnabledSettings, chainDetectionEnabled: false });
+
+        // Only conflict check findOne — no chain check
+        mockQuery.findOne.mockResolvedValueOnce(null);
+        const created = { id: 1, from: '/a', to: '/b', type: '301', isActive: true };
+        mockQuery.create.mockResolvedValue(created);
+
+        await expect(
+          service.create({ from: '/a', to: '/b', type: '301' }),
+        ).resolves.toEqual(created);
+
+        // Only one findOne call (conflict check), chain check was skipped
+        expect(mockQuery.findOne).toHaveBeenCalledTimes(1);
+        expect(mockQuery.findOne).toHaveBeenCalledWith({ where: { from: '/a' } });
+        expect(mockQuery.create).toHaveBeenCalledWith({
+          data: { from: '/a', to: '/b', type: '301' },
+        });
+      });
+    });
+
+    describe('update', () => {
+      it('should detect cycle when updating to creates a cycle', async () => {
+        // Existing redirect being updated: id=1, currently /a → /old-dest
+        // Trying to update to: /b
+        // Existing redirect: /b → /a (would create cycle)
+        mockQuery.findOne
+          .mockResolvedValueOnce({ id: 1, from: '/a', to: '/old-dest' }) // lookup existing for fromPath
+          .mockResolvedValueOnce({ from: '/b', to: '/a' });               // chain check: /b → /a (cycle!)
+
+        await expect(
+          service.update(1, { to: '/b' }),
+        ).rejects.toThrow('Redirect chain contains a cycle.');
+
+        expect(mockQuery.update).not.toHaveBeenCalled();
+      });
+
+      it('should skip chain check for update when chainDetectionEnabled is false', async () => {
+        mockStoreData.get.mockResolvedValue({ ...chainEnabledSettings, chainDetectionEnabled: false });
+
+        const updated = { id: 1, from: '/a', to: '/b', type: '301', isActive: true };
+        mockQuery.update.mockResolvedValue(updated);
+
+        const result = await service.update(1, { to: '/b' });
+
+        // No findOne calls (chain detection and conflict check both skipped)
+        expect(mockQuery.findOne).not.toHaveBeenCalled();
+        expect(mockQuery.update).toHaveBeenCalledWith({
+          where: { id: 1 },
+          data: { to: '/b' },
+        });
+        expect(result).toEqual(updated);
+      });
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Orphan redirect methods
+  // -------------------------------------------------------------------------
+
+  describe('Orphan redirects', () => {
+    const ORPHAN_UID = 'plugin::redirect-manager.orphan-redirect';
+
+    beforeEach(() => {
+      jest.clearAllMocks();
+      mockStoreData.get.mockResolvedValue(DEFAULT_TEST_SETTINGS);
+    });
+
+    describe('findAllOrphans', () => {
+      it('should return pending orphans ordered by createdAt desc', async () => {
+        const orphans = [
+          { id: 2, from: '/newer', status: 'pending', contentType: 'api::page.page', slug: 'newer', createdAt: '2026-02-01' },
+          { id: 1, from: '/older', status: 'pending', contentType: 'api::page.page', slug: 'older', createdAt: '2026-01-01' },
+        ];
+        mockQuery.findMany.mockResolvedValue(orphans);
+
+        const result = await service.findAllOrphans();
+
+        expect(mockStrapi.db.query).toHaveBeenCalledWith(ORPHAN_UID);
+        expect(mockQuery.findMany).toHaveBeenCalledWith({
+          where: { status: 'pending' },
+          orderBy: { createdAt: 'desc' },
+        });
+        expect(result).toEqual(orphans);
+      });
+    });
+
+    describe('resolveOrphan', () => {
+      it('should create a redirect and mark orphan as resolved', async () => {
+        const orphan = { id: 5, from: '/old-page', status: 'pending', contentType: 'api::page.page', slug: 'old-page' };
+        mockQuery.findOne.mockResolvedValueOnce(orphan); // orphan lookup
+        mockQuery.findOne.mockResolvedValueOnce(null);   // conflict check (no existing redirect)
+        mockQuery.create.mockResolvedValue({ id: 10, from: '/old-page', to: '/new-page', type: '301' });
+        mockQuery.update.mockResolvedValue({ id: 5, status: 'resolved' });
+
+        await service.resolveOrphan(5, '/new-page');
+
+        // Should have looked up the orphan
+        expect(mockQuery.findOne).toHaveBeenCalledWith({ where: { id: 5 } });
+        // Should have created a redirect
+        expect(mockQuery.create).toHaveBeenCalledWith({
+          data: expect.objectContaining({ from: '/old-page', to: '/new-page', type: '301' }),
+        });
+        // Should have marked orphan as resolved
+        expect(mockQuery.update).toHaveBeenCalledWith({
+          where: { id: 5 },
+          data: { status: 'resolved' },
+        });
+      });
+
+      it('should throw when orphan not found', async () => {
+        mockQuery.findOne.mockResolvedValue(null);
+
+        await expect(service.resolveOrphan(999, '/some-path')).rejects.toThrow(
+          'Orphan redirect with id 999 not found.',
+        );
+
+        expect(mockQuery.create).not.toHaveBeenCalled();
+        expect(mockQuery.update).not.toHaveBeenCalled();
+      });
+
+      it('should throw if a redirect from the same from already exists (conflict)', async () => {
+        const orphan = { id: 3, from: '/conflict-path', status: 'pending' };
+        const existingRedirect = { id: 99, from: '/conflict-path', to: '/somewhere' };
+        mockQuery.findOne.mockResolvedValueOnce(orphan);      // orphan lookup
+        mockQuery.findOne.mockResolvedValueOnce(existingRedirect); // conflict check
+
+        await expect(service.resolveOrphan(3, '/new-dest')).rejects.toThrow(
+          "A redirect from '/conflict-path' already exists.",
+        );
+      });
+    });
+
+    describe('dismissOrphan', () => {
+      it('should mark orphan as dismissed', async () => {
+        const orphan = { id: 7, from: '/to-dismiss', status: 'pending' };
+        mockQuery.findOne.mockResolvedValue(orphan);
+        mockQuery.update.mockResolvedValue({ id: 7, status: 'dismissed' });
+
+        await service.dismissOrphan(7);
+
+        expect(mockQuery.findOne).toHaveBeenCalledWith({ where: { id: 7 } });
+        expect(mockQuery.update).toHaveBeenCalledWith({
+          where: { id: 7 },
+          data: { status: 'dismissed' },
+        });
+      });
+
+      it('should throw when orphan not found', async () => {
+        mockQuery.findOne.mockResolvedValue(null);
+
+        await expect(service.dismissOrphan(404)).rejects.toThrow(
+          'Orphan redirect with id 404 not found.',
+        );
+
+        expect(mockQuery.update).not.toHaveBeenCalled();
+      });
     });
   });
 });

@@ -21,6 +21,9 @@ const mockService = {
   getSettings: jest.fn(),
   saveSettings: jest.fn(),
   getContentTypes: jest.fn(),
+  findAllOrphans: jest.fn(),
+  resolveOrphan: jest.fn(),
+  dismissOrphan: jest.fn(),
 };
 
 const mockStrapi = {
@@ -744,8 +747,8 @@ describe('redirectController', () => {
       const settings = {
         enabledContentTypes: {},
         autoRedirectOnSlugChange: true,
-        showChainWarning: true,
-        showOrphanNotification: true,
+        chainDetectionEnabled: true,
+        orphanRedirectEnabled: true,
       };
       mockService.getSettings.mockResolvedValue(settings);
       const ctx = createMockCtx();
@@ -906,8 +909,8 @@ describe('redirectController', () => {
           'api::page.page': { enabled: true, slugField: 'slug' },
         },
         autoRedirectOnSlugChange: true,
-        showChainWarning: true,
-        showOrphanNotification: true,
+        chainDetectionEnabled: true,
+        orphanRedirectEnabled: true,
       };
       mockService.saveSettings.mockResolvedValue(savedSettings);
       const ctx = createMockCtx({
@@ -926,8 +929,8 @@ describe('redirectController', () => {
           'api::page.page': { enabled: true, slugField: 'slug' },
         },
         autoRedirectOnSlugChange: true,
-        showChainWarning: true,
-        showOrphanNotification: true,
+        chainDetectionEnabled: true,
+        orphanRedirectEnabled: true,
       });
       expect(ctx.body).toEqual(savedSettings);
     });
@@ -937,15 +940,15 @@ describe('redirectController', () => {
       mockService.saveSettings.mockResolvedValue({
         enabledContentTypes: {},
         autoRedirectOnSlugChange: false,
-        showChainWarning: false,
-        showOrphanNotification: false,
+        chainDetectionEnabled: false,
+        orphanRedirectEnabled: false,
       });
       const ctx = createMockCtx({
         body: {
           enabledContentTypes: {},
           autoRedirectOnSlugChange: false,
-          showChainWarning: false,
-          showOrphanNotification: false,
+          chainDetectionEnabled: false,
+          orphanRedirectEnabled: false,
         },
       });
 
@@ -954,8 +957,8 @@ describe('redirectController', () => {
       expect(mockService.saveSettings).toHaveBeenCalledWith({
         enabledContentTypes: {},
         autoRedirectOnSlugChange: false,
-        showChainWarning: false,
-        showOrphanNotification: false,
+        chainDetectionEnabled: false,
+        orphanRedirectEnabled: false,
       });
     });
 
@@ -998,6 +1001,120 @@ describe('redirectController', () => {
 
       expect(mockService.getContentTypes).toHaveBeenCalledTimes(1);
       expect(ctx.body).toEqual(contentTypes);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Orphan redirect handlers
+  // -------------------------------------------------------------------------
+
+  describe('getOrphans', () => {
+    it('should return all pending orphan redirects', async () => {
+      const orphans = [
+        { id: 1, from: '/deleted-page', contentType: 'api::page.page', slug: 'deleted-page', status: 'pending' },
+      ];
+      mockService.findAllOrphans.mockResolvedValue(orphans);
+      const ctx = createMockCtx();
+
+      await controller.getOrphans(ctx as unknown as Parameters<typeof controller.getOrphans>[0]);
+
+      expect(mockService.findAllOrphans).toHaveBeenCalledTimes(1);
+      expect(ctx.body).toEqual({ data: orphans });
+    });
+  });
+
+  describe('resolveOrphan', () => {
+    it('should reject non-numeric id', async () => {
+      const ctx = createMockCtx({ params: { id: 'xyz' } });
+
+      await controller.resolveOrphan(ctx as unknown as Parameters<typeof controller.resolveOrphan>[0]);
+
+      expect(ctx.badRequest).toHaveBeenCalledWith('Invalid id parameter.');
+    });
+
+    it("should reject missing 'to' field", async () => {
+      const ctx = createMockCtx({ params: { id: '1' }, body: {} });
+
+      await controller.resolveOrphan(ctx as unknown as Parameters<typeof controller.resolveOrphan>[0]);
+
+      expect(ctx.badRequest).toHaveBeenCalledWith(
+        "'to' is required and must be a non-empty string.",
+      );
+    });
+
+    it("should reject 'to' that does not start with '/'", async () => {
+      const ctx = createMockCtx({ params: { id: '1' }, body: { to: 'no-slash' } });
+
+      await controller.resolveOrphan(ctx as unknown as Parameters<typeof controller.resolveOrphan>[0]);
+
+      expect(ctx.badRequest).toHaveBeenCalledWith("'to' must start with '/'.");
+    });
+
+    it('should call service.resolveOrphan and return 204 on success', async () => {
+      mockService.resolveOrphan.mockResolvedValue(undefined);
+      const ctx = createMockCtx({ params: { id: '5' }, body: { to: '/new-destination' } });
+
+      await controller.resolveOrphan(ctx as unknown as Parameters<typeof controller.resolveOrphan>[0]);
+
+      expect(mockService.resolveOrphan).toHaveBeenCalledWith(5, '/new-destination');
+      expect(ctx.status).toBe(204);
+      expect(ctx.body).toBeNull();
+    });
+
+    it('should return notFound when orphan does not exist', async () => {
+      mockService.resolveOrphan.mockRejectedValue(
+        new Error('Orphan redirect with id 999 not found.'),
+      );
+      const ctx = createMockCtx({ params: { id: '999' }, body: { to: '/dest' } });
+
+      await controller.resolveOrphan(ctx as unknown as Parameters<typeof controller.resolveOrphan>[0]);
+
+      expect(ctx.notFound).toHaveBeenCalledWith('Orphan redirect with id 999 not found.');
+    });
+
+    it('should return badRequest for conflict error (redirect from already exists)', async () => {
+      mockService.resolveOrphan.mockRejectedValue(
+        new Error("A redirect from '/old-path' already exists."),
+      );
+      const ctx = createMockCtx({ params: { id: '3' }, body: { to: '/new-dest' } });
+
+      await controller.resolveOrphan(ctx as unknown as Parameters<typeof controller.resolveOrphan>[0]);
+
+      expect(ctx.badRequest).toHaveBeenCalledWith(
+        "A redirect from '/old-path' already exists.",
+      );
+    });
+  });
+
+  describe('dismissOrphan', () => {
+    it('should reject non-numeric id', async () => {
+      const ctx = createMockCtx({ params: { id: 'bad' } });
+
+      await controller.dismissOrphan(ctx as unknown as Parameters<typeof controller.dismissOrphan>[0]);
+
+      expect(ctx.badRequest).toHaveBeenCalledWith('Invalid id parameter.');
+    });
+
+    it('should call service.dismissOrphan and return 204 on success', async () => {
+      mockService.dismissOrphan.mockResolvedValue(undefined);
+      const ctx = createMockCtx({ params: { id: '7' } });
+
+      await controller.dismissOrphan(ctx as unknown as Parameters<typeof controller.dismissOrphan>[0]);
+
+      expect(mockService.dismissOrphan).toHaveBeenCalledWith(7);
+      expect(ctx.status).toBe(204);
+      expect(ctx.body).toBeNull();
+    });
+
+    it('should return notFound when orphan does not exist', async () => {
+      mockService.dismissOrphan.mockRejectedValue(
+        new Error('Orphan redirect with id 404 not found.'),
+      );
+      const ctx = createMockCtx({ params: { id: '404' } });
+
+      await controller.dismissOrphan(ctx as unknown as Parameters<typeof controller.dismissOrphan>[0]);
+
+      expect(ctx.notFound).toHaveBeenCalledWith('Orphan redirect with id 404 not found.');
     });
   });
 });

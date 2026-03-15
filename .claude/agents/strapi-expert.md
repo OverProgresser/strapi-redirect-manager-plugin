@@ -82,8 +82,8 @@ Admin panel fetch'leri: `useFetchClient` ile `/${pluginId}/settings` — `/api/`
 `PluginSettings` interface: `autoRedirectOnSlugChange`, `chainDetectionEnabled`,
 `orphanRedirectEnabled` toggle'ları + `enabledContentTypes` map'i
 
-## Faza Branch & Commit Convention
-- Branch naming: `faza/2-middleware`, `faza/3-settings`, etc.
+## Branch & Commit Convention
+- All faza development happens on the `staging` branch. When ready, merge to `main` via PR.
 - Commit style: `feat:`, `fix:`, `refactor:`, `test:`, `docs:`
 - Before every commit, both `npm run test:ts:front` and `npm run test:ts:back` must pass
 

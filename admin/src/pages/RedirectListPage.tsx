@@ -23,6 +23,7 @@ import {
   Badge,
 } from '@strapi/design-system';
 import { Pencil, Trash, Plus } from '@strapi/icons';
+import { useNavigate } from 'react-router-dom';
 import { useFetchClient, useNotification } from '@strapi/strapi/admin';
 import { PLUGIN_ID } from '../pluginId';
 
@@ -72,6 +73,7 @@ function validateForm(values: FormValues): Record<string, string> {
 const RedirectListPage = () => {
   const { get, post, put, del } = useFetchClient();
   const { toggleNotification } = useNotification();
+  const navigate = useNavigate();
 
   const [redirects, setRedirects] = useState<Redirect[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -215,9 +217,14 @@ const RedirectListPage = () => {
           <Typography variant="alpha" tag="h1">
             Redirects
           </Typography>
-          <Button startIcon={<Plus />} onClick={openCreateModal}>
-            New Redirect
-          </Button>
+          <Flex gap={2}>
+            <Button variant="secondary" onClick={() => navigate('orphans')}>
+              Orphan Redirects
+            </Button>
+            <Button startIcon={<Plus />} onClick={openCreateModal}>
+              New Redirect
+            </Button>
+          </Flex>
         </Flex>
 
         {redirects.length === 0 ? (

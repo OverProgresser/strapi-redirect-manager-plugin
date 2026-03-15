@@ -22,6 +22,7 @@ type LifecycleEvent = {
 type LifecycleSubscriber = {
   beforeUpdate: (event: LifecycleEvent) => Promise<void>;
   afterUpdate: (event: LifecycleEvent) => Promise<void>;
+  afterDelete: (event: LifecycleEvent) => Promise<void>;
 };
 
 const mockRedirectQuery = {
@@ -42,6 +43,14 @@ const mockContentQuery = {
   deleteMany: jest.fn(),
 };
 
+const mockOrphanQuery = {
+  findOne: jest.fn(),
+  findMany: jest.fn(),
+  create: jest.fn(),
+  update: jest.fn(),
+  delete: jest.fn(),
+};
+
 const mockRedirectService = {
   getSettings: jest.fn(),
   create: jest.fn(),
@@ -54,6 +63,9 @@ const mockRedirectService = {
   toggleActive: jest.fn(),
   getContentTypes: jest.fn(),
   saveSettings: jest.fn(),
+  findAllOrphans: jest.fn(),
+  resolveOrphan: jest.fn(),
+  dismissOrphan: jest.fn(),
 };
 
 let subscribedHandler: LifecycleSubscriber;
@@ -68,6 +80,9 @@ const mockStrapi = {
     query: jest.fn((uid: string) => {
       if (uid === 'plugin::redirect-manager.redirect') {
         return mockRedirectQuery;
+      }
+      if (uid === 'plugin::redirect-manager.orphan-redirect') {
+        return mockOrphanQuery;
       }
       // For content-type queries (api::page.page etc.)
       return mockContentQuery;
@@ -89,12 +104,13 @@ const mockStrapi = {
 
 function makeSettings(overrides: {
   autoRedirectOnSlugChange?: boolean;
+  orphanRedirectEnabled?: boolean;
   enabledContentTypes?: Record<string, { enabled: boolean; slugField: string | null; urlPrefix?: string }>;
 } = {}) {
   return {
     autoRedirectOnSlugChange: overrides.autoRedirectOnSlugChange ?? true,
-    showChainWarning: true,
-    showOrphanNotification: true,
+    chainDetectionEnabled: true,
+    orphanRedirectEnabled: overrides.orphanRedirectEnabled ?? true,
     enabledContentTypes: overrides.enabledContentTypes ?? {
       'api::page.page': { enabled: true, slugField: 'slug' },
     },
@@ -655,6 +671,167 @@ describe('bootstrap', () => {
       );
       expect(mockStrapi.log.warn).toHaveBeenCalledWith(
         expect.stringContaining("A redirect from '/old-slug' already exists."),
+      );
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // afterDelete lifecycle
+  // -------------------------------------------------------------------------
+
+  describe('afterDelete lifecycle', () => {
+    beforeEach(async () => {
+      await bootstrap({ strapi: mockStrapi });
+      jest.clearAllMocks();
+    });
+
+    it('should return early for non-api:: UIDs', async () => {
+      const event: LifecycleEvent = {
+        model: { uid: 'plugin::users-permissions.user' },
+        params: {},
+        state: {},
+        result: { slug: 'some-slug' },
+      };
+
+      await subscribedHandler.afterDelete(event);
+
+      expect(mockRedirectService.getSettings).not.toHaveBeenCalled();
+      expect(mockOrphanQuery.create).not.toHaveBeenCalled();
+    });
+
+    it('should return early when orphanRedirectEnabled is false', async () => {
+      mockRedirectService.getSettings.mockResolvedValue(
+        makeSettings({ orphanRedirectEnabled: false }),
+      );
+
+      const event: LifecycleEvent = {
+        model: { uid: 'api::page.page' },
+        params: {},
+        state: {},
+        result: { slug: 'some-slug' },
+      };
+
+      await subscribedHandler.afterDelete(event);
+
+      expect(mockOrphanQuery.create).not.toHaveBeenCalled();
+    });
+
+    it('should return early when content type is not enabled', async () => {
+      mockRedirectService.getSettings.mockResolvedValue(
+        makeSettings({ enabledContentTypes: {} }),
+      );
+
+      const event: LifecycleEvent = {
+        model: { uid: 'api::page.page' },
+        params: {},
+        state: {},
+        result: { slug: 'some-slug' },
+      };
+
+      await subscribedHandler.afterDelete(event);
+
+      expect(mockOrphanQuery.create).not.toHaveBeenCalled();
+    });
+
+    it('should return early when slugField is null', async () => {
+      mockRedirectService.getSettings.mockResolvedValue(
+        makeSettings({
+          enabledContentTypes: {
+            'api::page.page': { enabled: true, slugField: null },
+          },
+        }),
+      );
+
+      const event: LifecycleEvent = {
+        model: { uid: 'api::page.page' },
+        params: {},
+        state: {},
+        result: { slug: 'some-slug' },
+      };
+
+      await subscribedHandler.afterDelete(event);
+
+      expect(mockOrphanQuery.create).not.toHaveBeenCalled();
+    });
+
+    it('should return early when result has no slug value', async () => {
+      mockRedirectService.getSettings.mockResolvedValue(makeSettings());
+
+      const event: LifecycleEvent = {
+        model: { uid: 'api::page.page' },
+        params: {},
+        state: {},
+        result: { title: 'No slug here' },
+      };
+
+      await subscribedHandler.afterDelete(event);
+
+      expect(mockOrphanQuery.create).not.toHaveBeenCalled();
+    });
+
+    it('should create orphan redirect when all conditions met', async () => {
+      mockRedirectService.getSettings.mockResolvedValue(makeSettings());
+      mockOrphanQuery.create.mockResolvedValue({ id: 1, from: '/some-slug', status: 'pending' });
+
+      const event: LifecycleEvent = {
+        model: { uid: 'api::page.page' },
+        params: {},
+        state: {},
+        result: { slug: 'some-slug' },
+      };
+
+      await subscribedHandler.afterDelete(event);
+
+      expect(mockStrapi.db.query).toHaveBeenCalledWith('plugin::redirect-manager.orphan-redirect');
+      expect(mockOrphanQuery.create).toHaveBeenCalledWith({
+        data: {
+          contentType: 'api::page.page',
+          slug: 'some-slug',
+          from: '/some-slug',
+          status: 'pending',
+        },
+      });
+    });
+
+    it('should apply urlPrefix when building orphan from path', async () => {
+      mockRedirectService.getSettings.mockResolvedValue(
+        makeSettings({
+          enabledContentTypes: {
+            'api::page.page': { enabled: true, slugField: 'slug', urlPrefix: '/blog' },
+          },
+        }),
+      );
+      mockOrphanQuery.create.mockResolvedValue({});
+
+      const event: LifecycleEvent = {
+        model: { uid: 'api::page.page' },
+        params: {},
+        state: {},
+        result: { slug: 'deleted-post' },
+      };
+
+      await subscribedHandler.afterDelete(event);
+
+      expect(mockOrphanQuery.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ from: '/blog/deleted-post' }),
+      });
+    });
+
+    it('should log warning and NOT throw when orphan creation fails', async () => {
+      mockRedirectService.getSettings.mockResolvedValue(makeSettings());
+      mockOrphanQuery.create.mockRejectedValue(new Error('DB error'));
+
+      const event: LifecycleEvent = {
+        model: { uid: 'api::page.page' },
+        params: {},
+        state: {},
+        result: { slug: 'some-slug' },
+      };
+
+      await expect(subscribedHandler.afterDelete(event)).resolves.toBeUndefined();
+
+      expect(mockStrapi.log.warn).toHaveBeenCalledWith(
+        expect.stringContaining('[redirect-manager] Could not create orphan redirect'),
       );
     });
   });

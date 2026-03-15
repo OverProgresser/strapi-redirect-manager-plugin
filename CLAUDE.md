@@ -17,59 +17,36 @@ olabilir. MCP'yi atlamak yasak.
 - **Build:** `strapi-plugin build` / `strapi-plugin watch`
 - **Type check:** `tsc --noEmit` (ayrı front + back tsconfig)
 
-## Hedef Özellikler
-
-### Özellik 1 — Manuel Redirect Yönetimi (çekirdek)
-Admin panel'den 301/302 redirect ekleme, düzenleme, silme.
-`from` ve `to` alanları. Runtime'da middleware ile devreye girer.
-
-### Özellik 2 — Runtime Middleware
-Her HTTP isteğinde `from` URL'leri eşleştirip 301/302 ile yönlendiren
-Strapi middleware. Redirect listesi performans için cache'lenir.
-
-### Özellik 3 — Slug Değişiminde Otomatik Redirect
-`beforeUpdate` / `afterUpdate` lifecycle hook'larıyla slug değişimi algılanır,
-otomatik 301 kaydı oluşturulur. Hangi content-type'ların izleneceği ve
-URL prefix'leri settings'ten alınır — hardcode yok.
-
-### Özellik 4 — Redirect Zinciri (Chain) Uyarısı
-Yeni redirect kaydedilirken A→B→C zinciri tespit edilirse admin UI'da uyarı
-gösterilir, A→C'ye kısaltma önerilir. Döngüsel redirect (A→B→A) de kontrol edilir.
-
-### Özellik 5 — Orphan Redirect Listesi
-İçerik silindiğinde `afterDelete` ile "bekleyen yönlendirmeler" kaydı oluşturulur.
-Admin panel'de editör hedef URL'yi girerek onaylar veya reddeder.
-
-### Plugin Settings Sayfası
-- İzlenecek content-type'lar (kullanıcı kendi modellerinden seçer)
-- Her content-type için URL prefix (ör. `api::post.post` → `/blog/`)
-- `autoRedirectOnSlugChange` toggle
-- `chainDetectionEnabled` toggle
-- `orphanRedirectEnabled` toggle
-
-## Content Type Tasarımı
-
-### `redirect` (koleksiyon)
+## Dizin Yapısı
 ```
-from:         string, required   — kaynak URL (ör. /eski-sayfa)
-to:           string, required   — hedef URL (ör. /yeni-sayfa)
-type:         enumeration, enum: ['301','302'], default '301'
-isActive:     boolean, default true
-comment:      text, optional
+admin/src/
+  index.ts              — plugin admin registration (settings section)
+  pages/Settings.tsx    — settings UI (content-type toggles, prefix map)
+  pages/HomePage.tsx    — plugin ana sayfası
+  pages/App.tsx         — admin router
+  components/           — Initializer, PluginIcon
+  pluginId.ts           — plugin ID sabiti
+server/src/
+  index.ts              — server entry (exports register, bootstrap, routes, etc.)
+  register.ts           — middleware + lifecycle hook kayıtları
+  bootstrap.ts          — slug auto-redirect lifecycle hooks
+  controllers/redirect.ts — CRUD + settings endpoints
+  services/redirect.ts  — DB query layer (strapi.db.query)
+  routes/redirect.ts    — admin route definitions (type: 'admin')
+  content-types/redirect/ — redirect schema
+  types/redirect.ts     — PluginSettings, Redirect interfaces
 ```
 
-### `orphan-redirect` (koleksiyon)
-```
-from:         string, required   — silinen içeriğin URL'si
-status:       enumeration, enum: ['pending','resolved','dismissed'], default 'pending'
-resolvedTo:   string, optional   — editörün girdiği hedef URL
-```
+## Özellikler & Content-Type Tasarımı
+Detaylı özellik açıklamaları ve content-type şemaları için bkz. **PRD.md**.
+Özet: Manuel redirect CRUD, runtime middleware, slug auto-redirect,
+chain detection, orphan redirect, settings sayfası.
 
 ## Geliştirme Sırası (Fazalar)
 1. ✅ **Faza 1** — Scaffold + package.json + proje iskelet
 2. ✅ **Faza 2** — `redirect` content-type + CRUD service/controller/route
-3. 🔄 **Faza 3** — Plugin Settings sayfası + slug auto-redirect (lifecycle hooks)
-4. **Faza 4** — Runtime middleware (cache dahil)
+3. ✅ **Faza 3** — Plugin Settings sayfası + slug auto-redirect (lifecycle hooks)
+4. ✅ **Faza 4** — Runtime middleware (cache dahil)
 5. **Faza 5** — Admin UI: redirect listesi + ekleme/düzenleme formu
 6. **Faza 6** — Chain detection
 7. **Faza 7** — Orphan redirect
@@ -86,16 +63,24 @@ resolvedTo:   string, optional   — editörün girdiği hedef URL
 ```bash
 npm run build          # strapi-plugin build
 npm run watch          # dev watch
-npm run watch:link     # linked dev
+npm run watch:link     # linked dev (host Strapi app ile)
 npm run verify         # plugin verify
 npm run test:ts:front  # tsc admin tsconfig
 npm run test:ts:back   # tsc server tsconfig
 ```
 
+## Dev Ortamı Kurulumu
+Plugin'i test etmek için ayrı bir Strapi v5 host app gerekli:
+1. Host app'te `npm install --save /path/to/301-redirect-strapi-plugin`
+2. `plugins.ts`'e plugin'i ekle
+3. Bu dizinde `npm run watch:link`, host app'te `npm run develop`
+
 ## Git Workflow
-- Branch per Faza: `faza/1-scaffold`, `faza/2-redirect-crud`, vb.
+- **`staging` branch:** Tüm faza geliştirmeleri burada birleştirilir.
+  Yeni özellikler `staging`'e merge edilir, hazır olunca `main`'e PR açılır.
 - Commit style: `feat:`, `fix:`, `refactor:`, `test:`, `docs:`
 - Her commit öncesi `test:ts:front` + `test:ts:back` geçmeli
+- Remote: `https://github.com/OverProgresser/strapi-redirect-manager-plugin.git`
 
 ## Teknik Kısıtlar (PRD Bölüm 6-7)
 - Controller'da input validation: boş string, yanlış tip, bilinmeyen alan kabul edilmez
