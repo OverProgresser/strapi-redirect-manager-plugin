@@ -9,6 +9,9 @@ function validateSlugPath(value: unknown, fieldName: string): string | null {
   if (typeof value !== 'string' || value.trim() === '') {
     return `'${fieldName}' is required and must be a non-empty string.`;
   }
+  if (value.startsWith('//')) {
+    return `'${fieldName}' must not be a protocol-relative URL.`;
+  }
   if (!value.startsWith('/')) {
     return `'${fieldName}' must start with '/'.`;
   }
@@ -101,6 +104,9 @@ const redirectController = ({ strapi }: { strapi: Core.Strapi }) => {
       }
 
       if (body['comment'] !== undefined) {
+        if (typeof body['comment'] !== 'string') {
+          return ctx.badRequest('comment must be a string');
+        }
         updateData['comment'] = body['comment'];
       }
 
@@ -166,8 +172,48 @@ const redirectController = ({ strapi }: { strapi: Core.Strapi }) => {
         showChainWarning,
         showOrphanNotification,
       } = body;
+
+      // Validate enabledContentTypes entries
+      const rawEct = (enabledContentTypes ?? {}) as Record<string, unknown>;
+      for (const [uid, ctSettings] of Object.entries(rawEct)) {
+        if (!uid.startsWith('api::')) {
+          return ctx.badRequest(`Invalid content type UID '${uid}': must start with 'api::'.`);
+        }
+        const ct = strapi.contentTypes[uid];
+        if (!ct) {
+          return ctx.badRequest(`Content type '${uid}' does not exist.`);
+        }
+        const settings = ctSettings as Record<string, unknown>;
+        const slugField = settings['slugField'];
+        if (slugField !== null && slugField !== undefined && slugField !== '') {
+          if (typeof slugField !== 'string') {
+            return ctx.badRequest(`'slugField' for '${uid}' must be a string.`);
+          }
+          const attr = (ct.attributes as Record<string, { type?: string }>)[slugField];
+          if (!attr || (attr.type !== 'string' && attr.type !== 'uid')) {
+            return ctx.badRequest(
+              `'${slugField}' is not a valid string/uid attribute of '${uid}'.`,
+            );
+          }
+        }
+        const urlPrefix = settings['urlPrefix'];
+        if (urlPrefix !== undefined && urlPrefix !== null && urlPrefix !== '') {
+          if (typeof urlPrefix !== 'string') {
+            return ctx.badRequest(`'urlPrefix' for '${uid}' must be a string.`);
+          }
+          if (urlPrefix.startsWith('http://') || urlPrefix.startsWith('https://')) {
+            return ctx.badRequest(
+              `'urlPrefix' for '${uid}' must not include the protocol (http:// or https://).`,
+            );
+          }
+          if (!urlPrefix.startsWith('/')) {
+            return ctx.badRequest(`'urlPrefix' for '${uid}' must start with '/'.`);
+          }
+        }
+      }
+
       const saveData: PluginSettings = {
-        enabledContentTypes: (enabledContentTypes ?? {}) as PluginSettings['enabledContentTypes'],
+        enabledContentTypes: rawEct as PluginSettings['enabledContentTypes'],
         autoRedirectOnSlugChange: autoRedirectOnSlugChange !== false,
         showChainWarning: showChainWarning !== false,
         showOrphanNotification: showOrphanNotification !== false,
