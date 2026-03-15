@@ -1,7 +1,7 @@
-import { Settings } from './Settings';
+import { RedirectListPage } from './RedirectListPage';
 
 const HomePage = () => {
-  return <Settings />;
+  return <RedirectListPage />;
 };
 
 export { HomePage };
