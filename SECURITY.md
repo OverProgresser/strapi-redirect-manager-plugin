@@ -15,8 +15,7 @@ If you discover a security vulnerability in this plugin, please report it respon
    - A description of the vulnerability
    - Steps to reproduce
    - Potential impact
-3. You will receive an acknowledgement within 48 hours.
-4. A fix will be developed privately and released as a patch version.
+3. A fix will be developed privately and released as a patch version.
 
 ## Security Model
 
