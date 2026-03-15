@@ -234,11 +234,14 @@ const redirectService = ({ strapi }: { strapi: Core.Strapi }) => {
 
       // Chain flattening: rewrite any redirect whose `to` points to the
       // orphan's old path so it goes directly to the new destination.
+      strapi.log.info(`[redirect-manager] Chain flattening: searching redirects with to='${orphanRecord.from}'`);
       const chainingRedirects = await strapi.db.query(UID).findMany({
         where: { to: orphanRecord.from, isActive: true },
       });
+      strapi.log.info(`[redirect-manager] Chain flattening: found ${chainingRedirects.length} chaining redirects`);
       for (const r of chainingRedirects) {
         const redirect = r as Redirect;
+        strapi.log.info(`[redirect-manager] Chain flattening: updating redirect id=${redirect.id} from='${redirect.from}' to='${to}'`);
         await strapi.db.query(UID).update({
           where: { id: redirect.id },
           data: { to },
