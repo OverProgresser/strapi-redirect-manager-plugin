@@ -1,5 +1,5 @@
 {
-  "name": "strapi-plugin-redirect-manager",
+  "name": "strapi-plugin-smart-redirect",
   "version": "0.1.0",
   "description": "Redirect management plugin for Strapi v5 — auto-redirects, chain detection, orphan redirect queue",
   "type": "commonjs",

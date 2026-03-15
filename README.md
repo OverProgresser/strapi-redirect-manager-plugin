@@ -23,7 +23,7 @@ Manage 301/302 redirects from the admin panel without touching code or redeployi
 ## Installation
 
 ```bash
-npm install strapi-plugin-redirect-manager
+npm install strapi-plugin-smart-redirect
 ```
 
 Add to `config/plugins.ts`:
